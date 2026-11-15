@@ -6,11 +6,10 @@
 //   confirmation. A `dev` PR merge is allowed only when CI is green and a "Merge gate" comment records
 //   qa-reviewer PASS and no open escalation (CLAUDE.md §3).
 // - No branch-protection bypass: no --no-verify, no force-push to protected branches, no --all/--mirror, no --admin.
-// - Secrets: no reading/writing/loading `.env*` (except .env.example); no committing .env files or secret-looking
-//   values; no writing secret-looking values into any file. Env-file checks are role-aware (see
-//   envAccessInSegment): search patterns, echo text, commit messages and metadata-only commands that merely
-//   contain ".env" are allowed; file arguments, redirects, globs, --env-file style values, and inline
-//   interpreter code that reference a real env file are denied. Tests: .claude/hooks/guard.test.mjs.
+// - Secrets: no reading/writing `.env*` (except .env.example); no committing .env files or secret-looking values;
+//   no writing secret-looking values into any file. Exception (maskSearchPatterns): the PATTERN argument of a
+//   search command (grep/rg/git grep/Select-String) is text, so `grep '\.env' file` is not env-file access.
+//   Every other token is checked exactly as before. Tests: .claude/hooks/guard.test.mjs.
 // - Production: no production Supabase migrations/pushes or Vercel production deploys by the agent.
 // Output: PreToolUse JSON decision on stdout ("deny" or "ask"); exit 0. Silent exit 0 = no opinion.
 
@@ -38,230 +37,10 @@ const SECRET_PATTERNS = [
   [/SUPABASE_SERVICE_ROLE(?:_KEY)?\s*[=:]\s*['"]?[A-Za-z0-9_.-]{8,}/, "service-role key value"],
 ];
 
-// True when a path/token names a real environment file (`.env`, `.env.local`, `C:\x\.env`, `HEAD:.env`),
-// excluding `.env.example`. Shell punctuation from `$(...)`/backticks/quotes is stripped first.
 const isEnvFile = (p) => {
-  const cleaned = String(p).replace(/^[$(`'"]+|[)`'";,]+$/g, "");
-  const b = cleaned.split(/[\\/:]/).pop();
+  const b = path.basename(String(p).replace(/["']/g, ""));
   return /^\.env(\..+)?$/i.test(b) && b.toLowerCase() !== ".env.example";
 };
-
-// A glob argument (e.g. `.env*`, `*.env`, `.env.*`) that could expand to a real environment file.
-const ENV_SAMPLES = [".env", ".env.local", ".env.production"];
-function globMatchesEnv(tok) {
-  const s = String(tok);
-  if (!/[*?[]/.test(s) || !/env/i.test(s)) return false;
-  const base = s.split(/[\\/]/).pop();
-  const re = new RegExp(`^${base.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`, "i");
-  return ENV_SAMPLES.some((n) => re.test(n));
-}
-const envTarget = (tok) => isEnvFile(tok) || globMatchesEnv(tok);
-
-// Env-file references embedded in inline code (node -e, python -c, heredoc bodies fed to interpreters).
-// `process.env.X` is not a reference: the char before `.env` must not be a word char.
-function embeddedEnvRef(code) {
-  for (const m of String(code).matchAll(/(?<![\w$])\.env(\.[\w.-]+)?(?![\w-])/gi)) {
-    if (m[0].toLowerCase() !== ".env.example") return m[0];
-  }
-  return null;
-}
-
-// ---- Role-aware env-file access analysis for one shell segment -------------------------------------
-// Distinguishes commands that READ/WRITE/LOAD a real env file from harmless text that merely contains
-// ".env" (search patterns, echo text, commit messages, metadata-only commands such as git check-ignore).
-const SEARCH_CMDS = new Set(["grep", "egrep", "fgrep", "rg", "ag", "findstr", "select-string", "sls", "sed", "awk"]);
-// Arguments are text or filter expressions, never files to open (PowerShell filter cmdlets included).
-const TEXT_CMDS = new Set(["echo", "printf", "write-output", "write-host", "write-verbose", ":",
-  "where-object", "where", "?", "select-object", "select", "sort-object", "measure-object", "format-table", "ft", "format-list", "fl"]);
-const META_CMDS = new Set(["ls", "dir", "gci", "get-childitem", "test-path", "test", "[", "stat", "find"]);
-const META_GIT = new Set(["check-ignore", "ls-files", "status"]); // names/state only (commit is handled separately)
-const INLINE_CODE = { node: ["-e", "-p", "--eval", "--print"], deno: ["eval"], bun: ["-e", "--eval"], python: ["-c"], python3: ["-c"], py: ["-c"], ruby: ["-e"], perl: ["-e", "-E"], php: ["-r"] };
-const SHELLS = { bash: ["-c"], sh: ["-c"], zsh: ["-c"], dash: ["-c"], pwsh: ["-c", "-command"], powershell: ["-c", "-command"], cmd: ["/c", "/k"] };
-// Search-command option roles. Short options are case-sensitive (`grep -c` counts, `grep -C 3` takes a value);
-// long and PowerShell options are compared lower-cased. Unknown options are treated as value-less flags.
-const S_PATTERN = new Set(["-e", "--regexp", "-pattern", "--pattern", "--expression"]); // value IS the pattern/script
-const S_PATTERN_FILE = new Set(["-f", "--file"]); // value is a pattern/script FILE: it is read AND supplies the pattern
-const S_PATH = new Set(["-path", "-literalpath"]); // Select-String files to search (read)
-const COMBINABLE = new Set(["grep", "egrep", "fgrep", "rg", "git-grep", "sed", "awk"]); // `-ne PAT`, `-eKEY`, `-fFILE`
-const S_GLOB = new Set(["--include", "-g", "--glob", "-include", "--iglob"]); // file filters: env globs = reading env files
-const S_VALUE = {
-  grep: ["-A", "-B", "-C", "-m", "-d", "-D", "--max-count", "--context", "--after-context", "--before-context", "--exclude", "--exclude-dir", "--label"],
-  rg: ["-A", "-B", "-C", "-m", "-t", "-T", "-M", "-j", "--type", "--type-not", "--max-count", "--context", "--max-depth", "--max-columns"],
-  "git-grep": ["-A", "-B", "-C", "-m", "--max-depth", "--max-count", "--context"],
-  sed: ["-l"],
-  awk: ["-v", "-F"],
-  "select-string": ["-encoding", "-exclude", "-include-not", "-context"],
-};
-S_VALUE.egrep = S_VALUE.grep; S_VALUE.fgrep = S_VALUE.grep; S_VALUE.ag = S_VALUE.rg; S_VALUE.sls = S_VALUE["select-string"];
-
-function splitRedirects(args) {
-  const rest = []; const targets = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    const m = /^(\d?>>?|&>>?|<)(.*)$/.exec(a) ?? (/\s/.test(a) ? null : /^[^>]+?(\d?>>?)([^>]+)$/.exec(a)); // `> f`, `>f`, `x>f`
-    if (m) { const tgt = m[2] || args[++i]; if (tgt && !/^&\d$/.test(tgt)) targets.push(tgt); } else rest.push(a);
-  }
-  return { rest, targets };
-}
-
-// For search/filter commands: the first positional (or -e/-Pattern value) is a PATTERN/script and is never a
-// file; every later positional, -f/-Path value, and --include/--glob filter is a file that gets READ.
-function searchArgsEnv(cmd, args) {
-  const valueOpts = new Set(S_VALUE[cmd] ?? []);
-  const norm = (n) => (n.startsWith("--") || cmd === "select-string" || cmd === "sls" ? n.toLowerCase() : n);
-  let patternSeen = false; let afterDashDash = false;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (!afterDashDash && a === "--") { afterDashDash = true; continue; }
-    const findstrOpt = cmd === "findstr" && /^\/[a-z]+(:.*)?$/i.test(a);
-    if (!afterDashDash && (a.startsWith("-") || findstrOpt)) {
-      // Value separator: findstr `/g:file`; PowerShell `-Path:file`; otherwise `--opt=value`.
-      const psStyle = cmd === "select-string" || cmd === "sls";
-      const sep = findstrOpt ? a.indexOf(":") : psStyle ? a.search(/[=:]/) : a.indexOf("=");
-      let name = norm(findstrOpt ? (sep !== -1 ? a.slice(0, sep) : a).toLowerCase() : (sep !== -1 ? a.slice(0, sep) : a));
-      let inline = sep !== -1 ? a.slice(sep + 1) : null;
-      // Short-option forms for grep/rg/git grep/sed/awk: combined flags ending in e/f take the next arg
-      // (`-ne PAT`, `-rf FILE`); attached values (`-eKEY`, `-fpats.txt`).
-      if (COMBINABLE.has(cmd) && !a.startsWith("--") && a.length > 2) {
-        const combined = /^-[A-Za-z]*([ef])$/.exec(a);
-        const attached = /^-([ef])(.+)$/.exec(a);
-        if (combined) { name = `-${combined[1]}`; inline = null; } else if (attached) { name = `-${attached[1]}`; inline = attached[2]; }
-      }
-      if (S_PATTERN.has(name) || name === "/c") { patternSeen = true; if (inline === null) i++; continue; }
-      if (S_PATTERN_FILE.has(name) || name === "/g") { patternSeen = true; const v = inline ?? args[++i] ?? ""; if (envTarget(v)) return v; continue; }
-      if (S_PATH.has(name) || name === "/f") { const v = inline ?? args[++i] ?? ""; if (envTarget(v)) return v; continue; }
-      if (S_GLOB.has(name)) { const v = inline ?? args[++i] ?? ""; if (envTarget(v)) return v; continue; }
-      if (valueOpts.has(name) && inline === null) i++;
-      continue;
-    }
-    if (!patternSeen) { patternSeen = true; continue; } // pattern / sed or awk script: text, not a file
-    if (envTarget(a)) return a; // files to search are read
-  }
-  return null;
-}
-
-// Returns the offending token if this segment accesses a real env file, else null.
-function envAccessInSegment(tokens) {
-  const { rest, targets } = splitRedirects(unwrap(tokens));
-  const redirect = targets.find(envTarget);
-  if (redirect) return redirect;
-  if (!rest.length) return null;
-  const cmd = prog(rest[0]); const args = rest.slice(1);
-
-  if (TEXT_CMDS.has(cmd)) return null; // arguments are text, not files (redirect targets checked above)
-  if (META_CMDS.has(cmd)) {
-    if (cmd === "find" && args.some((a) => /^-(exec|execdir|ok|okdir|delete|fprint\w*)$/.test(a))) return args.find(envTarget) ?? null;
-    return null; // lists names/existence only
-  }
-  if (cmd === "git") {
-    let i = 0;
-    while (i < args.length && (args[i] === "-C" || args[i] === "-c")) i += 2;
-    const sub = args[i]; const subArgs = args.slice(i + 1);
-    // git commit: message text is not access, but a pathspec (`git commit .env -m x`) commits that file.
-    if (sub === "commit") return positionalEnv(subArgs, /^(-[a-zA-Z]*[mFCct]|--(message|file|reuse-message|reedit-message|author|date|fixup|squash|template|trailer|cleanup))$/);
-    if (META_GIT.has(sub) || (sub === "rm" && subArgs.includes("--cached"))) return null;
-    if (sub === "grep") return searchArgsEnv("git-grep", subArgs);
-    // git log/shortlog: option values (--grep=".env", --author X) are text; a pathspec or rev:path shows content.
-    if (sub === "log" || sub === "shortlog") {
-      return positionalEnv(subArgs, /^(-n|-S|-G|--(grep|author|committer|max-count|since|until|after|before|format|pretty|skip|date))$/)
-        ?? subArgs.find((a) => a.includes(":") && isEnvFile(a)) ?? null;
-    }
-    // Other ref/metadata subcommands: only `rev:path` reads content.
-    if (["branch", "tag", "fetch", "remote", "rev-parse"].includes(sub)) {
-      return subArgs.find((a) => !a.startsWith("-") && a.includes(":") && isEnvFile(a)) ?? null;
-    }
-  }
-  if (SEARCH_CMDS.has(cmd)) return searchArgsEnv(cmd, args);
-  if (INLINE_CODE[cmd]) {
-    for (let i = 0; i < args.length; i++) {
-      if (INLINE_CODE[cmd].includes(args[i].toLowerCase())) { const ref = embeddedEnvRef(args[i + 1] ?? ""); if (ref) return ref; i++; }
-    }
-  }
-  if (SHELLS[cmd]) {
-    for (let i = 0; i < args.length; i++) {
-      if (SHELLS[cmd].includes(args[i].toLowerCase())) { const inner = args.slice(i + 1).join(" "); return envAccessInCommand(inner); }
-    }
-  }
-  // General command: any file argument or option value (`--opt=v`, PowerShell `-Path:v`) naming a real env file.
-  for (const a of args) {
-    if (a.startsWith("-")) {
-      const sep = a.search(/[=:]/);
-      if (sep !== -1 && envTarget(a.slice(sep + 1))) return a.slice(sep + 1);
-      continue;
-    }
-    if (envTarget(a)) return a;
-  }
-  return null;
-}
-
-// Positional (non-option) arguments that name an env file, skipping the values of options matched by
-// `valueOpt` (e.g. `-m "msg"`). Arguments after `--` are always positional.
-function positionalEnv(args, valueOpt) {
-  let afterDashDash = false;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (!afterDashDash && a === "--") { afterDashDash = true; continue; }
-    if (!afterDashDash && a.startsWith("-")) { if (valueOpt.test(a)) i++; continue; }
-    if (envTarget(a)) return a;
-  }
-  return null;
-}
-
-// Quote-aware split of a command into statements (`&&`, `||`, `;`, newline), each a list of pipeline
-// stages (`|`). Separators inside '...' or "..." are text, e.g. the pattern in grep -E 'a|\.env|b'.
-function splitShell(cmd) {
-  const statements = []; let stages = []; let cur = ""; let quote = null;
-  const endStatement = () => { stages.push(cur); statements.push(stages); stages = []; cur = ""; };
-  for (let i = 0; i < cmd.length; i++) {
-    const c = cmd[i]; const n = cmd[i + 1]; const prev = cmd[i - 1];
-    if (quote === "'") { cur += c; if (c === "'") quote = null; continue; }
-    if (c === "\\" && n !== undefined) { cur += c + n; i++; continue; } // escape (unquoted or in "...")
-    if (quote === '"') { cur += c; if (c === '"') quote = null; continue; }
-    if (c === "'" || c === '"') { quote = c; cur += c; continue; }
-    if ((c === "&" && n === "&") || (c === "|" && n === "|")) { endStatement(); i++; continue; }
-    if (c === "|" && n === "&") { stages.push(cur); cur = ""; i++; continue; } // |& pipes stdout+stderr
-    if (c === "&" && n !== ">" && prev !== ">" && prev !== "<") { endStatement(); continue; } // background `&`
-    if (c === ";" || c === "\n") { endStatement(); continue; }
-    if (c === "|") { stages.push(cur); cur = ""; continue; }
-    cur += c;
-  }
-  endStatement();
-  return statements;
-}
-
-// After a stage that names an env file, only these text FILTERS may follow (they never open the names they
-// receive). Anything else — xargs, while/read, Get-Content, cp, tar -T -, parallel, Import-Csv, unknown
-// programs — could open the named file, so it is denied (allowlist, conservative by default).
-const SAFE_FILTERS = new Set(["grep", "egrep", "fgrep", "rg", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "nl", "less", "more",
-  "tee", "select-object", "select", "where-object", "where", "?", "measure-object", "measure", "sort-object", "sort",
-  "out-null", "out-string", "out-host", "format-table", "ft", "format-list", "fl", "findstr"]);
-const namesEnv = (tokens) => tokens.find(envTarget) ?? null;
-
-// Analyze a whole command string (segments + command substitutions + interpreter heredocs) for env-file access.
-function envAccessInCommand(command) {
-  // Heredoc bodies received by a code interpreter (node <<EOF ... EOF) are code: scan them for env-file references.
-  for (const m of String(command).matchAll(/^([^\n]*?)<<-?\s*(['"]?)(\w+)\2([^\n]*)\n([\s\S]*?)\n[ \t]*\3[ \t]*(?=\n|$)/gm)) {
-    if (!heredocIsData(m[1], m[4]) && heredocFeedsCode(m[1], m[4])) { const ref = embeddedEnvRef(m[5]); if (ref) return ref; }
-  }
-  // Command substitutions run only in live shell text: the command with data heredocs removed, plus the
-  // bodies of UNQUOTED heredocs (<<EOF expands $(...) and `...`; <<'EOF' / <<"EOF" bodies are inert data,
-  // e.g. a Markdown PR body full of inline code).
-  const unquotedBodies = [...String(command).matchAll(/<<-?\s*(\w+)[^\n]*\n([\s\S]*?)\n[ \t]*\1[ \t]*(?=\n|$)/g)].map((m) => m[2]);
-  const live = [stripHeredocs(command), ...unquotedBodies].join("\n");
-  const subs = [...live.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)].map((m) => m[1] ?? m[2]);
-  for (const statement of [command, ...subs].flatMap((c) => splitShell(stripHeredocs(c)))) {
-    const stages = statement.map((s) => tokenize(s.trim()));
-    for (let i = 0; i < stages.length; i++) {
-      const hit = envAccessInSegment(stages[i]);
-      if (hit) return hit;
-      // A stage that only lists/prints/matches env file names is harmless on its own, but not when a later
-      // stage consumes those names as files (`find . -name .env | xargs cat`, `gci .env | Get-Content`).
-      const named = i < stages.length - 1 ? namesEnv(stages[i]) : null;
-      if (named && stages.slice(i + 1).some((s) => { const u = unwrap(s); return u.length && !SAFE_FILTERS.has(prog(u[0])); })) return named;
-    }
-  }
-  return null;
-}
 
 function decide(decision, reason) {
   process.stdout.write(JSON.stringify({
@@ -396,60 +175,99 @@ const prog = (tok) => path.basename(String(tok).replace(/\\/g, "/")).replace(/\.
 
 // Heredoc bodies are data (e.g. commit messages), not commands: drop them before analysis,
 // unless the heredoc feeds a shell/interpreter, in which case its body is analyzed as commands.
-// Strip command wrappers and env assignments so the real program is first:
-// `timeout 600 bash`, `sudo -u x bash`, `env CI=1 bash`, `nohup bash`, `nice -n 5 bash`, `FOO=1 bash` → `bash ...`.
-function unwrap(tokens) {
-  const t = [...tokens];
-  for (let guard = 0; guard < 10 && t.length; guard++) {
-    const p = prog(t[0]);
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t[0])) { t.shift(); continue; }
-    if (["nohup", "time", "command", "exec", "builtin"].includes(p)) { t.shift(); continue; }
-    if (p === "sudo") { t.shift(); while (t[0]?.startsWith("-")) { const o = t.shift(); if (/^-[ugCDhpRrTt]$/.test(o)) t.shift(); } continue; }
-    if (p === "env") { t.shift(); while (t[0] && (t[0].startsWith("-") || /^[A-Za-z_]\w*=/.test(t[0]))) { const o = t.shift(); if (o === "-u" || o === "-C" || o === "-S") t.shift(); } continue; }
-    if (p === "timeout") { t.shift(); while (t[0]?.startsWith("-")) { const o = t.shift(); if (o === "-s" || o === "-k" || o === "--signal" || o === "--kill-after") t.shift(); } t.shift(); continue; }
-    if (p === "nice") { t.shift(); if (t[0] === "-n") { t.shift(); t.shift(); } else if (/^-\d+$/.test(t[0] ?? "")) t.shift(); continue; }
-    if (p === "stdbuf") { t.shift(); while (t[0]?.startsWith("-")) t.shift(); continue; }
-    break;
-  }
-  return t;
-}
-
-// Which commands RECEIVE a heredoc: the last pipeline stage before `<<` (not earlier chained commands such as
-// `node x && git commit -F - <<EOF`), plus any stages it pipes into on the same line (`cat <<EOF | bash`).
-// A body is inert DATA only if every receiver is a known data sink; any other receiver (shells, interpreters,
-// wrappers, unknown programs) gets its body analyzed as commands — conservative by default.
-const CODE_RUNNERS = new Set(["node", "python", "python3", "py", "ruby", "perl", "php", "deno", "bun", "npx", "tsx"]);
-const DATA_SINKS = { git: ["commit", "tag", "notes", "hash-object", "apply", "am"], gh: null, cat: null, tee: null, "set-content": null, "out-file": null };
-function heredocReceiverTokens(pre, post) {
-  const lastStatement = splitShell(pre).pop() ?? [""];
-  const piped = (splitShell(post)[0] ?? []).slice(1); // `<<EOF | bash` → [" bash"]
-  return [lastStatement[lastStatement.length - 1], ...piped].map((s) => unwrap(tokenize(String(s).trim())));
-}
-function heredocIsData(pre, post) {
-  return heredocReceiverTokens(pre, post).every((toks) => {
-    if (!toks.length) return false;
-    const p = prog(toks[0]);
-    if (!(p in DATA_SINKS)) return false;
-    return DATA_SINKS[p] === null || DATA_SINKS[p].includes(toks.slice(1).find((x) => !x.startsWith("-")));
-  });
-}
-const heredocFeedsCode = (pre, post) => heredocReceiverTokens(pre, post).some((toks) => toks.length && CODE_RUNNERS.has(prog(toks[0])));
+const INTERPRETER = /(^|[\s/\\&|;(])(ba|z|da|k)?sh(\.exe)?\b|pwsh|powershell|\bnode\b|python|\bcmd\b|xargs|\beval\b|\bsource\b/i;
 const stripHeredocs = (cmd) => cmd.replace(
   /^([^\n]*?)<<-?\s*(['"]?)(\w+)\2([^\n]*)\n[\s\S]*?\n[ \t]*\3[ \t]*(?=\n|$)/gm,
-  (m, pre, _q, _tag, post) => (heredocIsData(pre, post) ? `${pre}<<HEREDOC${post}` : m),
+  (m, pre, _q, _tag, post) => (INTERPRETER.test(pre + post) ? m : `${pre}<<HEREDOC${post}`),
 );
 
-function checkShell(command, cwd) {
-  // Real env-file access (read/write/load/search-inside/redirect/inline code). Text that merely contains
-  // ".env" — search patterns, echo text, commit messages, metadata-only commands — is not access.
-  const envHit = envAccessInCommand(command);
-  if (envHit) deny(`Shell access to environment file \`${envHit}\` is not allowed. Secrets stay with the human.`);
+// ---- Search-pattern masking (the only relaxation of the env-file check) ------------------------------
+// A search command's PATTERN argument is text, never a file: `ls -a | grep -i '^\.env'` must not count as
+// env-file access. Before the normal checks run, the pattern token is replaced with a placeholder; every other
+// token (files to search, -Path values, other commands) is checked exactly as before. Conservative by design:
+// if the pattern could come from anywhere else (-f/--file pattern files, attached -eKEY / --regexp=, unknown
+// layouts), nothing is masked. sed/awk are not masked because their scripts can open files.
+const SEARCH_VALUE_OPTS = new Set(["-A", "-B", "-C", "-m", "-d", "-D", "-t", "-T", "-M", "-j", "--type", "--type-not",
+  "--max-count", "--context", "--after-context", "--before-context", "--max-depth", "--exclude", "--exclude-dir", "--include", "--glob", "-g"]);
+const PS_SEARCH_VALUE_OPTS = new Set(["-path", "-literalpath", "-encoding", "-exclude", "-include", "-context"]);
 
+// Index of the pattern token in a search-command stage, or -1 when it cannot be identified safely.
+function searchPatternIndex(tokens) {
+  const p = prog(tokens[0] ?? "");
+  let i = 1;
+  if (p === "git" && tokens[1] === "grep") i = 2;
+  else if (!["grep", "egrep", "fgrep", "rg", "select-string", "sls"].includes(p)) return -1;
+  const ps = p === "select-string" || p === "sls";
+  if (!ps) {
+    for (let j = i; j < tokens.length && tokens[j] !== "--"; j++) {
+      const a = tokens[j];
+      if (a === "-f" || a === "--file" || /^--(file|regexp)=/.test(a)) return -1; // pattern comes from a file / inline
+      if (!a.startsWith("--") && /^-[A-Za-z]*f/.test(a)) return -1;              // -f combined/attached (-rf, -fFILE)
+      if (!a.startsWith("--") && /^-[A-Za-z]*e./.test(a)) return -1;             // attached -eKEY
+    }
+  }
+  for (let j = i; j < tokens.length; j++) {
+    const a = tokens[j];
+    if (a === "--") return j + 1 < tokens.length ? j + 1 : -1;
+    if (ps ? a.toLowerCase() === "-pattern" : a === "-e" || a === "--regexp" || /^-[A-Za-z]+e$/.test(a)) return j + 1 < tokens.length ? j + 1 : -1;
+    if (a.startsWith("-")) { if ((ps ? PS_SEARCH_VALUE_OPTS : SEARCH_VALUE_OPTS).has(ps ? a.toLowerCase() : a)) j++; continue; }
+    return j; // first positional = pattern
+  }
+  return -1;
+}
+
+// Stages that may follow a masked search stage: text filters that never open the names they receive.
+// If anything else follows (xargs, Get-Content, cat, a shell, ...), the matched names could be opened, so the
+// pattern is NOT masked (e.g. `ls -a | grep '^\.env' | xargs cat` stays denied, as before).
+const SAFE_FILTERS = new Set(["head", "tail", "wc", "sort", "uniq", "cut", "tr", "nl", "less", "more", "grep", "egrep", "fgrep", "rg",
+  "select-object", "select", "measure-object", "measure", "sort-object", "out-null", "out-string", "out-host", "format-table", "ft", "format-list", "fl"]);
+
+// Replace each search command's pattern token with a placeholder (quote-aware stage scan; offsets preserved).
+function maskSearchPatterns(cmd) {
+  const pipelines = [[]]; let start = 0; let quote = null; // pipelines of [start, end] stage spans
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i];
+    if (quote) { if (c === quote) quote = null; continue; }
+    if (c === "'" || c === '"') { quote = c; continue; }
+    if (c === "|") { pipelines[pipelines.length - 1].push([start, i]); start = i + 1; }
+    else if (c === ";" || c === "\n" || c === "&") { pipelines[pipelines.length - 1].push([start, i]); pipelines.push([]); start = i + 1; }
+  }
+  pipelines[pipelines.length - 1].push([start, cmd.length]);
+  const tokensOf = ([s, e]) => [...cmd.slice(s, e).matchAll(/"[^"]*"|'[^']*'|\S+/g)];
+  const unquote = (m) => m[0].replace(/^(['"])([\s\S]*)\1$/, "$2");
+  const edits = [];
+  for (const stages of pipelines) {
+    stages.forEach(([s, e], k) => {
+      const toks = tokensOf([s, e]);
+      const idx = searchPatternIndex(toks.map(unquote));
+      if (idx === -1) return;
+      const laterSafe = stages.slice(k + 1).every((span) => {
+        const first = tokensOf(span)[0];
+        return !first || SAFE_FILTERS.has(prog(unquote(first)));
+      });
+      if (laterSafe) edits.push([s + toks[idx].index, s + toks[idx].index + toks[idx][0].length]);
+    });
+  }
+  let out = cmd;
+  for (const [a, b] of edits.reverse()) out = `${out.slice(0, a)}__SEARCH_PATTERN__${out.slice(b)}`;
+  return out;
+}
+
+function checkShell(rawCommand, cwd) {
+  const command = maskSearchPatterns(rawCommand);
   for (const seg of stripHeredocs(command).split(/&&|\|\||[;|\n]/)) {
     const t = tokenize(seg.trim()).map((tok) => (["git", "gh", "supabase", "vercel"].includes(prog(tok)) ? prog(tok) : tok));
     const rawTokens = tokenize(seg.trim());
     if (!t.length) continue;
     const segLower = seg.toLowerCase();
+
+    // Reading or exposing .env files through the shell (allow .gitignore edits, git check-ignore, git rm --cached).
+    // A `git commit` segment's arguments are message text; its staged files are checked in checkGitCommit.
+    const isCommit = t[t.indexOf("git") + 1] === "commit";
+    const envTok = isCommit ? null : t.find(isEnvFile);
+    if (envTok && !/gitignore|check-ignore|rm --cached/.test(segLower)) {
+      deny(`Shell access to environment file \`${envTok}\` is not allowed. Secrets stay with the human.`);
+    }
 
     const gi = t.indexOf("git");
     if (gi !== -1) {

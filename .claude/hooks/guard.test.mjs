@@ -60,7 +60,6 @@ console.log("# env: harmless text/search/metadata (expect ALLOW)");
   ["git ls-files glob", "Bash", `git ls-files -- '${E}*'`],
   ["git rm --cached", "Bash", `git rm --cached ${E}.local`],
   ["find by name (no exec)", "Bash", `find . -name '${E}*' -not -path './node_modules/*'`],
-  ["test -f existence check", "Bash", `test -f ${E} && echo present`],
   ["node -e using process.env", "Bash", `node -e "console.log(process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'unset')"`],
   ["cat .env.example", "Bash", `cat ${E}.example`],
   // Pipelines where the env-looking text is a pattern in the LAST stage, or no consumer follows.
@@ -69,8 +68,8 @@ console.log("# env: harmless text/search/metadata (expect ALLOW)");
   ["quoted pipe inside grep -E pattern", "Bash", `git log --oneline | grep -E 'eyJ|\\${E}|x' | head -5`],
   ["git log --grep value (space-separated)", "Bash", `git log --oneline --grep "${E} files"`],
   ["names piped only into safe filters", "Bash", `ls -a | grep -i '\\${E}' | sort | head -5`],
-  ["echo names | tee list (writes names only)", "Bash", `echo ${E} | tee list.txt`],
   ["2>&1 | grep pattern", "Bash", `npm run build 2>&1 | grep -n '\\${E}'`],
+  ["git status | grep pattern (last stage)", "Bash", `git status --short 2>&1 | grep '\\${E}'`],
   ["PS call operator with env text in pattern", "PowerShell", `& "C:\\Program Files\\Git\\cmd\\git.exe" log --oneline --grep="${E}"`],
   ["wrapped git commit heredoc (data)", "Bash", `timeout 60 git commit -q -F - <<'EOF'\nno ${E} access\nEOF`],
   ["PS Where-Object name filter (metadata)", "PowerShell", `Get-ChildItem -Force | Where-Object Name -like '${E}*' | Select-Object Name`],
@@ -78,7 +77,6 @@ console.log("# env: harmless text/search/metadata (expect ALLOW)");
   // Found while opening the retrospective PR: Markdown inline code in a quoted heredoc is inert text.
   ["quoted-heredoc PR body with markdown backticks", "Bash", `gh pr create --base dev --body-file - <<'EOF'\nDenied: \`grep KEY ${E}.local\`, \`$(cat ${E})\`\nEOF`],
   // Found when committing the PR #29 fixes: an earlier chained `node` command is not the heredoc's receiver.
-  ["node chained before git commit heredoc (text)", "Bash", `node x.js && git status && git commit -q -F - <<'EOF'\nmsg: no ${E} access; -p ${E}\nEOF`],
   ["double-quoted-heredoc body with backticks", "Bash", `gh pr comment 1 --body-file - <<"EOF"\nSee \`cat ${E}.local\`\nEOF`],
 ].forEach(([label, tool, command]) => check(label, tool, sh(command), "ALLOW"));
 
@@ -87,42 +85,32 @@ console.log("# env: real secret-file access (expect DENY)");
 [
   ["cat env", "Bash", `cat ${E}`],
   ["cat ./env.local", "Bash", `cat ./${E}.local`],
-  ["cat env glob", "Bash", `cat ${E}*`],
   ["PS type Windows path", "PowerShell", `type C:\\proj\\${E}`],
   ["PS Get-Content -Path", "PowerShell", `Get-Content -Path ${E}.production`],
   ["grep inside env file", "Bash", `grep SUPABASE ${E}.local`],
   ["grep -c (flag) then env file", "Bash", `grep -c KEY ${E}`],
-  ["grep --include env glob", "Bash", `grep -r KEY --include=${E}* .`],
-  ["rg --glob env", "Bash", `rg KEY --glob '${E}*'`],
   ["grep -f env (pattern file)", "Bash", `grep -f ${E} README.md`],
   ["PS Select-String -Path env", "PowerShell", `Select-String -Pattern KEY -Path ${E}`],
   ["sed -i on env", "Bash", `sed -i 's/a/b/' ${E}`],
   ["cp env.local out", "Bash", `cp ${E}.local backup.txt`],
   ["cp example to env.local (create)", "Bash", `cp ${E}.example ${E}.local`],
   ["redirect write > env", "Bash", `echo SECRET=x > ${E}`],
-  ["redirect attached >env", "Bash", `echo SECRET=x >${E}.local`],
   ["redirect read < env", "Bash", `node app.js < ${E}`],
-  ["node -e reads env", "Bash", `node -e "require('fs').readFileSync('${E}','utf8')"`],
-  ["node heredoc reads env", "Bash", `node <<'EOF'\nconsole.log(require('fs').readFileSync('${E}.local','utf8'))\nEOF`],
-  ["bash -c cat env", "Bash", `bash -c 'cat ${E}'`],
   ["heredoc piped into bash runs cat env", "Bash", `cat <<'EOF' | bash\ncat ${E}\nEOF`],
-  ["chained cmd then node heredoc reads env", "Bash", `git status && node <<'EOF'\nrequire('fs').readFileSync('${E}')\nEOF`],
-  ["pwsh -Command Get-Content env", "PowerShell", `pwsh -Command "Get-Content ${E}"`],
-  ["node --env-file", "Bash", `node --env-file=${E} server.js`],
   ["source env", "Bash", `source ${E}`],
   ["command substitution", "Bash", `export $(cat ${E} | xargs)`],
-  ["unquoted heredoc expands $(cat env)", "Bash", `cat > out.txt <<EOF\n$(cat ${E})\nEOF`],
-  ["unquoted heredoc expands backtick env", "Bash", `cat > out.txt <<EOF\n\`cat ${E}.local\`\nEOF`],
   ["git add env.local", "Bash", `git add ${E}.local`],
   ["git add -f env", "Bash", `git add -f ${E}`],
-  ["git show rev:env", "Bash", `git show HEAD:${E}`],
   ["find -exec cat env", "Bash", `find . -name ${E} -exec cat {} ;`],
   // From the PR #29 security/QA review: name-producing stages piped into a file consumer.
   ["find | xargs cat", "Bash", `find . -name ${E} | xargs cat`],
+  // A search pattern is masked only if nothing after it can open files: matched names fed to a reader stay denied.
+  ["grep pattern names piped to xargs cat", "Bash", `ls -a | grep -i '^\\${E}' | xargs cat`],
+  ["grep pattern names piped through head to cat", "Bash", `ls -a | grep '\\${E}' | head -1 | xargs cat`],
+  ["PS Select-String names piped to Get-Content", "PowerShell", `gci -Name | Select-String '\\${E}' | Get-Content`],
   ["find -print0 | xargs -0 cat", "Bash", `find . -name ${E} -print0 | xargs -0 cat`],
   ["find | while read; cat", "Bash", `find . -name ${E} | while read f; do cat $f; done`],
   ["find | xargs -I{} cp", "Bash", `find . -name ${E} | xargs -I{} cp {} /tmp/out`],
-  ["find glob | xargs cat", "Bash", `find . -name '${E}*' | xargs cat`],
   ["ls -a env | xargs cat", "Bash", `ls -a ${E} | xargs cat`],
   ["git ls-files -o env | xargs cat", "Bash", `git ls-files -o ${E} | xargs cat`],
   ["echo env | xargs cat", "Bash", `echo ${E} | xargs cat`],
@@ -132,7 +120,6 @@ console.log("# env: real secret-file access (expect DENY)");
   ["PS gci -Hidden -Filter | gc", "PowerShell", `gci -Hidden -Filter ${E}.local | gc`],
   ["PS ls | Get-Content", "PowerShell", `ls ${E} | Get-Content`],
   ["PS gci | ForEach-Object Get-Content", "PowerShell", `Get-ChildItem ${E} | ForEach-Object { Get-Content $_ }`],
-  ["PS gci -Filter glob | Get-Content", "PowerShell", `Get-ChildItem -Filter ${E}* | Get-Content`],
   // From the review: pattern supplied by an option, so the next positional is a FILE.
   ["grep -f pats env", "Bash", `grep -f pats.txt ${E}`],
   ["grep --file=pats env", "Bash", `grep --file=pats.txt ${E}`],
@@ -149,14 +136,11 @@ console.log("# env: real secret-file access (expect DENY)");
   ["git log -p -- env", "Bash", `git log -p -- ${E}`],
   ["git log --follow -p env.local", "Bash", `git log --follow -p ${E}.local`],
   ["git log --all -p env", "Bash", `git log --all -p ${E}`],
-  ["PS Get-Content -Path:env", "PowerShell", `Get-Content -Path:${E}`],
-  ["PS Select-String -Path:env", "PowerShell", `Select-String -Pattern K -Path:${E}`],
   // From the PR #29 round-2 review: wrappers before the heredoc receiver; splitter gaps; unlisted readers.
   ["sudo bash heredoc cat env", "Bash", `sudo bash <<'EOF'\ncat ${E}\nEOF`],
   ["env bash heredoc cat env", "Bash", `env bash <<'EOF'\ncat ${E}\nEOF`],
   ["command bash heredoc cat env", "Bash", `command bash <<'EOF'\ncat ${E}\nEOF`],
   ["heredoc | sudo bash cat env", "Bash", `cat <<'EOF' | sudo bash\ncat ${E}\nEOF`],
-  ["env bash -c cat env", "Bash", `env bash -c 'cat ${E}'`],
   ["background & then cat env", "Bash", `ls & cat ${E}`],
   ["echo & cat env", "Bash", `echo hi & cat ${E}`],
   ["find |& xargs cat", "Bash", `find . -name ${E} |& xargs cat`],
@@ -165,13 +149,44 @@ console.log("# env: real secret-file access (expect DENY)");
   ["find | tar -T -", "Bash", `find . -name ${E} | tar -cf x.tar -T -`],
   ["find | bat", "Bash", `find . -name ${E} | bat`],
   ["PS gci | Import-Csv", "PowerShell", `gci ${E} | Import-Csv`],
-  ["git commit env pathspec first", "Bash", `git commit ${E} -m x`],
-  ["git commit env pathspec last", "Bash", `git commit -m x ${E}`],
   ["Read tool env.local", "Read", null],
   ["Write tool env", "Write", null],
 ].forEach(([label, tool, command]) => {
   const input = tool === "Read" ? { file_path: `C:/x/${E}.local` } : tool === "Write" ? { file_path: `C:/x/${E}`, content: "X=1" } : sh(command);
   check(label, tool, input, "DENY");
+});
+
+// ---- 2b. Known limitations: pre-existing guard behaviour, NOT asserted --------------------------------
+// The previous guard (146cb5f) behaves the same way on all of these. Narrowing PR #29 to the search-pattern fix
+// (owner decision) deliberately left them unchanged. They are printed for visibility; see the retrospective's
+// follow-ups. KNOWN GAP = real env access the guard does not catch; KNOWN FP = harmless command it still blocks.
+console.log("# known limitations (pre-existing; informational, not counted)");
+[
+  ["KNOWN GAP", "cat env glob", "Bash", `cat ${E}*`],
+  ["KNOWN GAP", "grep --include env glob", "Bash", `grep -r KEY --include=${E}* .`],
+  ["KNOWN GAP", "rg --glob env", "Bash", `rg KEY --glob '${E}*'`],
+  ["KNOWN GAP", "redirect attached >env", "Bash", `echo SECRET=x >${E}.local`],
+  ["KNOWN GAP", "node -e reads env", "Bash", `node -e "require('fs').readFileSync('${E}','utf8')"`],
+  ["KNOWN GAP", "node heredoc reads env", "Bash", `node <<'EOF'\nconsole.log(require('fs').readFileSync('${E}.local','utf8'))\nEOF`],
+  ["KNOWN GAP", "bash -c cat env", "Bash", `bash -c 'cat ${E}'`],
+  ["KNOWN GAP", "chained cmd then node heredoc reads env", "Bash", `git status && node <<'EOF'\nrequire('fs').readFileSync('${E}')\nEOF`],
+  ["KNOWN GAP", "pwsh -Command Get-Content env", "PowerShell", `pwsh -Command "Get-Content ${E}"`],
+  ["KNOWN GAP", "node --env-file", "Bash", `node --env-file=${E} server.js`],
+  ["KNOWN GAP", "unquoted heredoc expands $(cat env)", "Bash", `cat > out.txt <<EOF\n$(cat ${E})\nEOF`],
+  ["KNOWN GAP", "unquoted heredoc expands backtick env", "Bash", `cat > out.txt <<EOF\n\`cat ${E}.local\`\nEOF`],
+  ["KNOWN GAP", "git show rev:env", "Bash", `git show HEAD:${E}`],
+  ["KNOWN GAP", "find glob | xargs cat", "Bash", `find . -name '${E}*' | xargs cat`],
+  ["KNOWN GAP", "PS gci -Filter glob | Get-Content", "PowerShell", `Get-ChildItem -Filter ${E}* | Get-Content`],
+  ["KNOWN GAP", "PS Get-Content -Path:env", "PowerShell", `Get-Content -Path:${E}`],
+  ["KNOWN GAP", "PS Select-String -Path:env", "PowerShell", `Select-String -Pattern K -Path:${E}`],
+  ["KNOWN GAP", "env bash -c cat env", "Bash", `env bash -c 'cat ${E}'`],
+  ["KNOWN GAP", "git commit env pathspec first", "Bash", `git commit ${E} -m x`],
+  ["KNOWN GAP", "git commit env pathspec last", "Bash", `git commit -m x ${E}`],
+  ["KNOWN FP", "test -f existence check", "Bash", `test -f ${E} && echo present`],
+  ["KNOWN FP", "echo names | tee list (writes names only)", "Bash", `echo ${E} | tee list.txt`],
+  ["KNOWN FP", "node chained before git commit heredoc (text)", "Bash", `node x.js && git status && git commit -q -F - <<'EOF'\nmsg: no ${E} access; -p ${E}\nEOF`],
+].forEach(([kind, label, tool, command]) => {
+  console.log(`info     ${runGuard(tool, sh(command)).padEnd(6)}${kind}: ${label}`);
 });
 
 // ---- 3. Branches, bypasses, secrets in content, production (deterministic) ------------------------
