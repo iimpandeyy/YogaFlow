@@ -7,14 +7,28 @@
 
 ## 1. Toolchain
 
-- Node.js 24 LTS and npm (the package manager is confirmed by YF-02 / #7).
+- Node.js 24 LTS. **The package manager is npm** (the decision is final). Commit `package-lock.json`.
+  Do not use other package managers or their lockfiles.
 - Next.js (App Router), TypeScript (strict), Tailwind CSS, Vitest + React Testing Library, Playwright.
-- GitHub CLI: `C:\Users\AiDev\Tools\gh\bin\gh.exe` (call it by full path; it is authenticated and can read Project fields).
+- GitHub CLI: `C:\Users\AiDev\Tools\gh\bin\gh.exe` (call it by full path).
+
+### GitHub identities
+
+| Who | Account | Used for |
+|---|---|---|
+| AI agents | **`yyogaaflow`** (git author `YogaFlow AiDev <yyogaaflow@gmail.com>`) | Branches, commits, pushes, PRs, comments, routine `dev` merges |
+| Human owner | **`iimpandeyy`** | Independent review and approval of `staging`/`main` promotions, Human Review, closing Issues |
+
+Before any GitHub write, check the active account with
+`gh.exe auth status`. If needed, switch with `gh.exe auth switch --user yyogaaflow`.
+Run `gh.exe auth setup-git` once so `git push` uses the active gh account rather than credentials cached
+in Git Credential Manager. The guard hook refuses pushes and gh writes unless `yyogaaflow` is active, and
+refuses commits unless the author email is `yyogaaflow@gmail.com`.
 
 ## 2. Commands
 
-YF-02 (#7) creates these scripts. **Until #7 is merged they do not exist.** Report them as
-`N/A — scripts not yet created (#7)`. Never report them as passing.
+YF-02 (#7) creates these scripts with exactly these names. **Until #7 is merged they do not exist.**
+Report them as `N/A — scripts not yet created (#7)`. Never report them as passing.
 
 | Purpose | Command | Required for completion? |
 |---|---|---|
@@ -24,7 +38,7 @@ YF-02 (#7) creates these scripts. **Until #7 is merged they do not exist.** Repo
 | Type-check | `npm run typecheck` | **Yes** |
 | Unit/component tests | `npm run test` | **Yes** |
 | Production build | `npm run build` | **Yes** |
-| End-to-end tests | `npm run test:e2e` (exact name set by #21) | Yes, for flow-affecting work once #21 exists |
+| End-to-end tests | `npm run test:e2e` (#7 scaffolds the script; #21 adds the flow tests) | Yes, for flow-affecting work once the tests exist |
 
 Test data rules:
 - Unit and component tests use local deterministic fixtures and mocks. They never connect to Supabase.
@@ -42,16 +56,28 @@ aidev/<issue#>-<slug> ──PR──▶ dev ──(human PR + approval)──▶
 2. Make small, focused commits that reference the Issue (for example, `YF-02: add lint script (#7)`).
 3. Push the feature branch and open a PR **into `dev`** (`gh pr create --base dev`). Use "Refs #N".
    Use "Closes #N" only if the human asked for the Issue to be closed.
-4. **Merge gate.** The agent may merge its own `dev` PR only when all of these hold:
-   - the required checks (§2) pass and CI is green;
+4. **Merge gate.** Agents (as `yyogaaflow`) may integrate routine work into `dev` **without human
+   approval**, but only after the required verification. All of these must hold:
+   - lint, typecheck, test and build pass locally, and CI is green on the PR;
    - `qa-reviewer` returned `PASS`;
    - no architecture/security/policy/UX escalation is unresolved;
    - the PR contains only the Issue's scope.
 
-   Before merging, post a PR comment that records the gate evidence. Otherwise, leave the PR open for the human.
+   Post this comment on the PR, then merge with `gh.exe pr merge <n> --merge`:
+   ```markdown
+   ### Merge gate
+   - Checks: lint pass · typecheck pass · test pass · build pass · CI green
+   - qa-reviewer: PASS
+   - Escalations: none
+   - Scope: Issue #N only
+   ```
+   The guard hook **refuses** a `dev` merge if any CI check is failing or pending, or if the comment is
+   missing or doesn't say `qa-reviewer: PASS` and `Escalations: none`. It **asks** the human when the PR
+   has no CI checks at all. If any condition is unmet, leave the PR open and report.
 5. `staging` is the higher-trust pre-production/integration branch. Promotions from `dev` to `staging`
-   and from `staging` to `main`, and Vercel production deploys, are **human-only**.
-   The rulesets require 1 approval on `staging`/`main`.
+   and from `staging` to `main` need **1 independent approval from `iimpandeyy`**. There is no bypass, and
+   approvals cannot be reduced. Agents may prepare a promotion PR only when the human asks. They never
+   approve or merge it, and never deploy production.
 6. Never use `--force` on shared branches, `--no-verify`, or `--admin` merges.
 
 ## 4. Evidence each PR needs (paste into the PR body)

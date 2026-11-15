@@ -10,6 +10,9 @@ Target Issue: **#$ARGUMENTS**. If no number was given, ask for one.
 Follow `CLAUDE.md` throughout. Its decision rights (§5) override convenience.
 
 ## 1. Intake and readiness gate (stop if any check fails)
+0. Identity: `gh.exe auth status --active` must show **`yyogaaflow`**, and `git config user.email` must be
+   `yyogaaflow@gmail.com`. If either is wrong, run `gh.exe auth switch --user yyogaaflow`, or stop and ask the
+   human. Never act as `iimpandeyy`.
 1. Read the Issue: `"C:\Users\AiDev\Tools\gh\bin\gh.exe" issue view $ARGUMENTS --json title,body,state`.
    Extract the outcome, acceptance criteria, constraints, dependencies, SDD IDs, and Figma references.
 2. **Human Review = Reviewed** must be set in the GitHub Project. Read it with:
@@ -54,8 +57,9 @@ Follow `CLAUDE.md` throughout. Its decision rights (§5) override convenience.
    - no escalation is unresolved;
    - the PR contains only the Issue's scope.
 
-   Post a PR comment listing the gate evidence, then run `gh.exe pr merge <n> --merge`.
-   If any condition is unmet or uncertain, leave the PR open and report to the human.
+   Post the "Merge gate" comment exactly as in `docs/DEVELOPMENT.md` §3, then run `gh.exe pr merge <n> --merge`.
+   The guard refuses the merge if CI isn't green or the comment is missing. Never post the comment unless every
+   condition is genuinely met. If any condition is unmet or uncertain, leave the PR open and report to the human.
 5. Never close the Issue, change Human Review or Status, or touch `staging`/`main`.
    Those belong to the human.
 

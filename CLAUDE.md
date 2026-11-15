@@ -35,15 +35,23 @@ On task details, the GitHub Project/Issues override ROADMAP.
 
 Promotion flow: `aidev/*` → PR → `dev` → (human) `staging` → (human) `main` → Vercel production.
 
+**Identities.** Agents act **only** as the AiDev GitHub account **`yyogaaflow`**, with git author
+`YogaFlow AiDev <yyogaaflow@gmail.com>`. That covers branches, commits, pushes, PRs, Issue comments,
+and routine `dev` integration. The human owner **`iimpandeyy`** is the independent higher-trust
+reviewer and approver. Agents never act as `iimpandeyy`. Before any GitHub write, check that
+`gh.exe auth status` shows `yyogaaflow` as the active account. If it does not, stop and tell the human.
+
 | Branch | Role | Who controls it |
 |---|---|---|
 | `aidev/<issue#>-<slug>` | Feature work for one Issue | **The agent, autonomously**: commits, pushes, opens a PR into `dev`. |
 | `dev` | Development integration | The agent **may merge its own PR** once the merge gate below is met. Direct pushes are not allowed; use a PR. |
-| `staging` | Higher-trust pre-production/integration, before `main` | **Human only.** |
-| `main` | Production; deploys to Vercel | **Human only.** |
+| `staging` | Higher-trust pre-production/integration, before `main` | **Human only.** Needs 1 independent approval from `iimpandeyy`. |
+| `main` | Production; deploys to Vercel | **Human only.** Needs 1 independent approval from `iimpandeyy`. |
 
-**Merge gate for `dev`.** The agent merges its own PR only when **all** of these hold, and the evidence
-is recorded in the PR:
+**Merge gate for `dev`.** Agents may integrate routine work into `dev` **without human approval**,
+but only after the required verification. The agent merges its own PR only when **all** of these hold,
+and a "Merge gate" PR comment records the evidence (format in `docs/DEVELOPMENT.md` §3). The guard
+hook refuses a `dev` merge when CI isn't green or the gate comment is missing.
 1. Every required check in `docs/DEVELOPMENT.md` §2 passes, and CI (once it exists) is green on the PR.
 2. `qa-reviewer` returned `PASS`. `PASS WITH GAPS` or `FAIL` does not qualify.
 3. No `HUMAN DECISION REQUIRED` or unresolved architecture/security/policy/UX escalation remains.
@@ -138,9 +146,14 @@ The standard workflow is the `yogaflow-issue` skill (`.claude/skills/yogaflow-is
 
 ## 9. Environment notes
 
-- Windows 11. Git Bash and PowerShell are both available. Node 24 and npm are installed.
+- Windows 11. Git Bash and PowerShell are both available. Node 24 is installed.
+- **The package manager is npm.** Do not introduce pnpm, yarn, or bun, or commit their lockfiles.
+  The commands are in `docs/DEVELOPMENT.md` §2.
+  E2E tests run with `npm run test:e2e` once #7 creates the script.
 - GitHub CLI: `C:\Users\AiDev\Tools\gh\bin\gh.exe` (not on PATH; call it by full path, and do not reinstall it).
-  It is authenticated, with `repo` and `project` scopes. Python is **not installed**.
+  The agent account is `yyogaaflow`. `iimpandeyy` may also be logged in, but only the human uses it.
+  Python is **not installed**.
 - Server-side rules (rulesets): `dev` requires a PR (0 approvals) and blocks force-push and deletion.
-  `staging`/`main` require a PR with 1 approval. There are no required status checks yet, so the
-  merge gate in §3 is enforced by the agent, not by GitHub.
+  `staging`/`main` require a PR with 1 approval and no bypass. `dev` has no required status checks yet,
+  so the §3 merge gate is enforced by this workflow (skill plus guard hook). Whether to make CI checks
+  required on GitHub is an open question for the retrospective after the first Issue run.

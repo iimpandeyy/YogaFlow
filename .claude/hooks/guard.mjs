@@ -1,18 +1,26 @@
 #!/usr/bin/env node
 // YogaFlow PreToolUse guard. Deterministic safeguards that must not depend on prompt compliance.
+// - Identity: GitHub writes and pushes only as the agent account `yyogaaflow`; commits only with the AiDev author;
+//   agents never approve PRs, read tokens, or switch to the human account.
 // - Protected branches: no push / PR / merge into `main` or `staging`. Direct push to `dev` requires human
-//   confirmation; merging a PR whose base is `dev` is allowed (CLAUDE.md §5 merge conditions apply).
-// - No branch-protection bypass: no --no-verify, no force-push to protected branches, no --all/--mirror.
+//   confirmation. A `dev` PR merge is allowed only when CI is green and a "Merge gate" comment records
+//   qa-reviewer PASS and no open escalation (CLAUDE.md §3).
+// - No branch-protection bypass: no --no-verify, no force-push to protected branches, no --all/--mirror, no --admin.
 // - Secrets: no reading/writing `.env*` (except .env.example); no committing .env files or secret-looking values;
 //   no writing secret-looking values into any file.
 // - Production: no production Supabase migrations/pushes or Vercel production deploys by the agent.
 // Output: PreToolUse JSON decision on stdout ("deny" or "ask"); exit 0. Silent exit 0 = no opinion.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const PROTECTED = new Set(["main", "staging"]);
 const CONFIRM = new Set(["dev"]);
+const AGENT_ACCOUNT = "yyogaaflow";
+const AGENT_EMAIL = "yyogaaflow@gmail.com";
+const HUMAN_ACCOUNT = "iimpandeyy";
+const GH_WRITE_GROUPS = new Set(["pr", "issue", "project", "repo", "release", "label", "workflow", "run", "ruleset"]);
 
 const SECRET_PATTERNS = [
   [/eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, "JWT (Supabase anon/service-role key)"],
@@ -80,10 +88,14 @@ function checkGitPush(args, cwd) {
     if (CONFIRM.has(t)) ask(`Direct push to \`${t}\`. The normal path is a feature branch plus a PR into dev. Human confirmation required.`);
   }
   if (force) ask(`Force push to ${targets.join(", ")}. Confirm that this is your own feature branch.`);
+  requireAgentIdentity(null, cwd, "`git push`");
 }
 
 function checkGitCommit(args, cwd) {
   if (args.some((a) => a === "--no-verify" || a === "-n")) deny("`git commit --no-verify` bypasses checks.");
+  if (args.some((a) => a === "--author" || a.startsWith("--author="))) deny("Agents commit only as the configured AiDev author; do not use --author.");
+  const email = git(cwd, ["config", "user.email"]).trim();
+  if (email.toLowerCase() !== AGENT_EMAIL) deny(`Git author email is \`${email || "unset"}\`, not the agent identity \`${AGENT_EMAIL}\`.`);
   const all = args.some((a) => a === "-a" || a === "--all" || /^-[A-Za-z]*a/.test(a) && !a.startsWith("--"));
   const names = git(cwd, ["diff", "--cached", "--name-only"]) + (all ? git(cwd, ["diff", "--name-only"]) : "");
   const env = names.split(/\r?\n/).filter(Boolean).find(isEnvFile);
@@ -94,17 +106,66 @@ function checkGitCommit(args, cwd) {
   if (hit) deny(`Staged changes appear to contain a secret (${hit}). Remove it before committing.`);
 }
 
-// Resolve the base branch of a PR via gh (full-path fallback per CLAUDE.md §9). Returns null if unknown.
-function prBase(ghBin, args, cwd) {
-  const sel = args.find((a, i) => i > 1 && !a.startsWith("-") && !/^(--\w+)$/.test(args[i - 1] ?? "")) ?? null;
-  const bins = [ghBin, "gh", "C:\\Users\\AiDev\\Tools\\gh\\bin\\gh.exe"];
-  for (const b of bins) {
-    try {
-      return execFileSync(b, ["pr", "view", ...(sel ? [sel] : []), "--json", "baseRefName", "--jq", ".baseRefName"],
-        { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 12000 }).trim() || null;
-    } catch { /* try next */ }
+const GH_FALLBACK = "C:\\Users\\AiDev\\Tools\\gh\\bin\\gh.exe";
+
+// Run gh (the invoked binary first, then PATH, then the known full path). Returns stdout+stderr, or null.
+function runGh(ghBin, args, cwd) {
+  for (const b of [ghBin, "gh", GH_FALLBACK].filter(Boolean)) {
+    const r = spawnSync(b, args, { cwd, encoding: "utf8", timeout: 12000 });
+    if (!r.error) return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
   }
   return null;
+}
+
+// Active GitHub CLI account (the identity used for gh writes and, via `gh auth setup-git`, for git push).
+let activeUserCache;
+function activeGhUser(ghBin, cwd) {
+  if (activeUserCache !== undefined) return activeUserCache;
+  const r = runGh(ghBin, ["auth", "status", "--active", "--hostname", "github.com"], cwd);
+  activeUserCache = r?.out.match(/account\s+([A-Za-z0-9-]+)/)?.[1] ?? null;
+  return activeUserCache;
+}
+function requireAgentIdentity(ghBin, cwd, action) {
+  const user = activeGhUser(ghBin, cwd);
+  if (user !== AGENT_ACCOUNT) {
+    deny(`${action} must run as the agent account \`${AGENT_ACCOUNT}\`, but the active gh account is \`${user ?? "unknown"}\`. ` +
+      `Run \`gh.exe auth switch --user ${AGENT_ACCOUNT}\` (or ask the human to log it in).`);
+  }
+}
+
+// Pure merge-gate evaluation for a PR (gh pr view --json baseRefName,statusCheckRollup,comments).
+// Returns null (allow) or [decision, reason].
+export function evaluateMergeGate(pr) {
+  if (!pr) return ["ask", "Could not read the PR (base, checks, comments). Human confirmation required."];
+  const base = pr.baseRefName;
+  if (PROTECTED.has(base)) return ["deny", `Merging into \`${base}\` is a human-controlled promotion (needs independent approval by ${HUMAN_ACCOUNT}).`];
+  if (base !== "dev") return ["ask", `PR base is \`${base ?? "unknown"}\`, not \`dev\`. Human confirmation required.`];
+  const checks = pr.statusCheckRollup ?? [];
+  const okConclusions = ["SUCCESS", "NEUTRAL", "SKIPPED"];
+  const notGreen = checks.filter((c) => (c.state !== undefined && c.status === undefined)
+    ? String(c.state).toUpperCase() !== "SUCCESS"
+    : String(c.status ?? "").toUpperCase() !== "COMPLETED" || !okConclusions.includes(String(c.conclusion ?? "").toUpperCase()));
+  if (notGreen.length) {
+    return ["deny", `dev merge gate: CI is not green (${notGreen.map((c) => c.name ?? c.context ?? "check").join(", ")}). Fix or wait; do not merge.`];
+  }
+  const gate = (pr.comments ?? []).some((c) => /^#{1,6}\s*Merge gate\b/im.test(c.body ?? "")
+    && /^\s*-\s*qa-reviewer:\s*PASS\s*$/im.test(c.body ?? "")
+    && /^\s*-\s*Escalations:\s*none\s*$/im.test(c.body ?? ""));
+  if (!gate) {
+    return ["deny", "dev merge gate: no PR comment with `### Merge gate`, `- qa-reviewer: PASS` and `- Escalations: none` " +
+      "(docs/DEVELOPMENT.md §3). Post it only if every condition is genuinely met."];
+  }
+  if (!checks.length) return ["ask", "dev merge gate: this PR has no CI checks, so green CI cannot be verified. Human confirmation required."];
+  return null;
+}
+
+function checkPrMerge(ghBin, args, cwd) {
+  const sel = args.slice(2).find((a, i, arr) => !a.startsWith("-") && !/^--(body|subject|match-head-commit|author-email|repo)$/.test(arr[i - 1] ?? ""));
+  const r = runGh(ghBin, ["pr", "view", ...(sel ? [sel] : []), "--json", "baseRefName,statusCheckRollup,comments"], cwd);
+  let pr = null;
+  try { if (r?.ok) pr = JSON.parse(r.out.slice(r.out.indexOf("{"))); } catch { pr = null; }
+  const verdict = evaluateMergeGate(pr);
+  if (verdict) decide(verdict[0], verdict[0] === "deny" ? `${verdict[1]} See CLAUDE.md §3.` : verdict[1]);
 }
 
 // Normalize a command token to its program name: "C:\...\gh.exe" -> "gh".
@@ -136,7 +197,10 @@ function checkShell(command, cwd) {
     const gi = t.indexOf("git");
     if (gi !== -1) {
       let i = gi + 1;
-      while (i < t.length && (t[i] === "-C" || t[i] === "-c")) i += 2; // skip global options
+      while (i < t.length && (t[i] === "-C" || t[i] === "-c")) { // skip global options
+        if (t[i] === "-c" && /^user\.(email|name)=/i.test(t[i + 1] ?? "")) deny("Overriding the git author identity with `-c user.*` is not allowed.");
+        i += 2;
+      }
       const sub = t[i]; const rest = t.slice(i + 1);
       const subCwd = t[gi + 1] === "-C" ? path.resolve(cwd, t[gi + 2]) : cwd;
       if (sub === "push") checkGitPush(rest, subCwd);
@@ -146,6 +210,24 @@ function checkShell(command, cwd) {
 
     if (t.includes("gh")) {
       const g = t.slice(t.indexOf("gh") + 1);
+      const ghBin = rawTokens[t.indexOf("gh")];
+      if (g[0] === "auth") {
+        if (g[1] === "token") deny("`gh auth token` would expose a credential.");
+        if (g[1] === "switch") {
+          const ui = g.findIndex((a) => a === "--user" || a === "-u");
+          if (g[ui + 1] !== AGENT_ACCOUNT) deny(`Agents may only switch to \`${AGENT_ACCOUNT}\`. \`${HUMAN_ACCOUNT}\` is the human reviewer's identity.`);
+        }
+        if (g[1] === "logout") ask("Logging out a GitHub account. Human confirmation required.");
+      }
+      if (g[0] === "pr" && g[1] === "review" && g.some((a) => a === "--approve" || a === "-a")) {
+        deny(`Agents never approve PRs. Independent approval is ${HUMAN_ACCOUNT}'s role.`);
+      }
+      if (g[0] === "secret" || (g[0] === "variable" && g[1] !== "list")) deny("Managing GitHub Actions secrets/variables is human-only.");
+      const READ_ACTIONS = new Set(["view", "list", "status", "checks", "diff", "item-list", "field-list", "--help", "help"]);
+      const writeApi = g[0] === "api" && g.some((a) => /^(-X|--method)$/.test(a) || /^--method=/.test(a) || /^-[fF]$/.test(a) || /^--(raw-)?field$/.test(a) || a === "--input");
+      if (writeApi || (GH_WRITE_GROUPS.has(g[0]) && g[1] && !READ_ACTIONS.has(g[1]))) {
+        requireAgentIdentity(ghBin, cwd, `\`gh ${g[0]} ${g[1] ?? ""}\``.replace(" `", "`"));
+      }
       if (g[0] === "pr" && g[1] === "create") {
         const bi = g.findIndex((a) => a === "--base" || a === "-B");
         const base = bi !== -1 ? g[bi + 1] : (g.find((a) => a.startsWith("--base="))?.split("=")[1] ?? null);
@@ -154,13 +236,9 @@ function checkShell(command, cwd) {
       }
       if (g[0] === "pr" && g[1] === "merge") {
         if (g.includes("--admin")) deny("`gh pr merge --admin` bypasses branch protection.");
-        const base = prBase(rawTokens[t.indexOf("gh")], g, cwd);
-        if (base && PROTECTED.has(base)) deny(`Merging into \`${base}\` is a human-controlled promotion.`);
-        if (base !== "dev") ask(`Could not confirm this PR targets \`dev\` (base: ${base ?? "unknown"}). Human confirmation required.`);
-        // base === dev: allowed. CLAUDE.md §5 merge conditions (checks green, QA PASS, no open escalation) still apply.
+        checkPrMerge(ghBin, g, cwd);
       }
-      const write = g.some((a) => /^(-X|--method)$/.test(a) || /^--method=/.test(a) || /^-[fF]$/.test(a) || a === "--input");
-      if (g[0] === "api" && /protection|rulesets/.test(segLower) && write) deny("Changing branch protection or rulesets is human-only.");
+      if (g[0] === "api" && /protection|rulesets/.test(segLower) && writeApi) deny("Changing branch protection or rulesets is human-only.");
     }
 
     if (t.includes("supabase")) {
@@ -179,7 +257,10 @@ function checkShell(command, cwd) {
   }
 }
 
+// Run as a hook only when executed directly (tests import evaluateMergeGate without triggering this).
+const isMain = process.argv[1] && path.resolve(process.argv[1]).toLowerCase() === fileURLToPath(import.meta.url).toLowerCase();
 let raw = "";
+if (isMain) {
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (c) => (raw += c));
 process.stdin.on("end", () => {
@@ -202,3 +283,4 @@ process.stdin.on("end", () => {
   }
   process.exit(0);
 });
+}
