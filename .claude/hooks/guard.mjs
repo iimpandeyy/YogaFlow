@@ -6,8 +6,11 @@
 //   confirmation. A `dev` PR merge is allowed only when CI is green and a "Merge gate" comment records
 //   qa-reviewer PASS and no open escalation (CLAUDE.md §3).
 // - No branch-protection bypass: no --no-verify, no force-push to protected branches, no --all/--mirror, no --admin.
-// - Secrets: no reading/writing `.env*` (except .env.example); no committing .env files or secret-looking values;
-//   no writing secret-looking values into any file.
+// - Secrets: no reading/writing/loading `.env*` (except .env.example); no committing .env files or secret-looking
+//   values; no writing secret-looking values into any file. Env-file checks are role-aware (see
+//   envAccessInSegment): search patterns, echo text, commit messages and metadata-only commands that merely
+//   contain ".env" are allowed; file arguments, redirects, globs, --env-file style values, and inline
+//   interpreter code that reference a real env file are denied. Tests: .claude/hooks/guard.test.mjs.
 // - Production: no production Supabase migrations/pushes or Vercel production deploys by the agent.
 // Output: PreToolUse JSON decision on stdout ("deny" or "ask"); exit 0. Silent exit 0 = no opinion.
 
@@ -35,10 +38,155 @@ const SECRET_PATTERNS = [
   [/SUPABASE_SERVICE_ROLE(?:_KEY)?\s*[=:]\s*['"]?[A-Za-z0-9_.-]{8,}/, "service-role key value"],
 ];
 
+// True when a path/token names a real environment file (`.env`, `.env.local`, `C:\x\.env`, `HEAD:.env`),
+// excluding `.env.example`. Shell punctuation from `$(...)`/backticks/quotes is stripped first.
 const isEnvFile = (p) => {
-  const b = path.basename(String(p).replace(/["']/g, ""));
+  const cleaned = String(p).replace(/^[$(`'"]+|[)`'";,]+$/g, "");
+  const b = cleaned.split(/[\\/:]/).pop();
   return /^\.env(\..+)?$/i.test(b) && b.toLowerCase() !== ".env.example";
 };
+
+// A glob argument (e.g. `.env*`, `*.env`, `.env.*`) that could expand to a real environment file.
+const ENV_SAMPLES = [".env", ".env.local", ".env.production"];
+function globMatchesEnv(tok) {
+  const s = String(tok);
+  if (!/[*?[]/.test(s) || !/env/i.test(s)) return false;
+  const base = s.split(/[\\/]/).pop();
+  const re = new RegExp(`^${base.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`, "i");
+  return ENV_SAMPLES.some((n) => re.test(n));
+}
+const envTarget = (tok) => isEnvFile(tok) || globMatchesEnv(tok);
+
+// Env-file references embedded in inline code (node -e, python -c, heredoc bodies fed to interpreters).
+// `process.env.X` is not a reference: the char before `.env` must not be a word char.
+function embeddedEnvRef(code) {
+  for (const m of String(code).matchAll(/(?<![\w$])\.env(\.[\w.-]+)?(?![\w-])/gi)) {
+    if (m[0].toLowerCase() !== ".env.example") return m[0];
+  }
+  return null;
+}
+
+// ---- Role-aware env-file access analysis for one shell segment -------------------------------------
+// Distinguishes commands that READ/WRITE/LOAD a real env file from harmless text that merely contains
+// ".env" (search patterns, echo text, commit messages, metadata-only commands such as git check-ignore).
+const SEARCH_CMDS = new Set(["grep", "egrep", "fgrep", "rg", "ag", "findstr", "select-string", "sls", "sed", "awk"]);
+const TEXT_CMDS = new Set(["echo", "printf", "write-output", "write-host", "write-verbose", ":"]);
+const META_CMDS = new Set(["ls", "dir", "gci", "get-childitem", "test-path", "test", "[", "stat", "find"]);
+const META_GIT = new Set(["check-ignore", "ls-files", "status", "commit"]); // commit: staged files checked in checkGitCommit
+const INLINE_CODE = { node: ["-e", "-p", "--eval", "--print"], deno: ["eval"], bun: ["-e", "--eval"], python: ["-c"], python3: ["-c"], py: ["-c"], ruby: ["-e"], perl: ["-e", "-E"], php: ["-r"] };
+const SHELLS = { bash: ["-c"], sh: ["-c"], zsh: ["-c"], dash: ["-c"], pwsh: ["-c", "-command"], powershell: ["-c", "-command"], cmd: ["/c", "/k"] };
+// Search-command option roles. Short options are case-sensitive (`grep -c` counts, `grep -C 3` takes a value);
+// long and PowerShell options are compared lower-cased. Unknown options are treated as value-less flags.
+const S_PATTERN = new Set(["-e", "--regexp", "-pattern", "--pattern"]);
+const S_PATH = new Set(["-f", "--file", "-path", "-literalpath"]); // files that are READ (pattern files, scripts, inputs)
+const S_GLOB = new Set(["--include", "-g", "--glob", "-include", "--iglob"]); // file filters: env globs = reading env files
+const S_VALUE = {
+  grep: ["-A", "-B", "-C", "-m", "-d", "-D", "--max-count", "--context", "--after-context", "--before-context", "--exclude", "--exclude-dir", "--label"],
+  rg: ["-A", "-B", "-C", "-m", "-t", "-T", "-M", "-j", "--type", "--type-not", "--max-count", "--context", "--max-depth", "--max-columns"],
+  "git-grep": ["-A", "-B", "-C", "-m", "--max-depth", "--max-count", "--context"],
+  sed: ["-l"],
+  awk: ["-v", "-F"],
+  "select-string": ["-encoding", "-exclude", "-include-not", "-context"],
+};
+S_VALUE.egrep = S_VALUE.grep; S_VALUE.fgrep = S_VALUE.grep; S_VALUE.ag = S_VALUE.rg; S_VALUE.sls = S_VALUE["select-string"];
+
+function splitRedirects(args) {
+  const rest = []; const targets = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    const m = /^(\d?>>?|&>>?|<)(.*)$/.exec(a) ?? (/\s/.test(a) ? null : /^[^>]+?(\d?>>?)([^>]+)$/.exec(a)); // `> f`, `>f`, `x>f`
+    if (m) { const tgt = m[2] || args[++i]; if (tgt && !/^&\d$/.test(tgt)) targets.push(tgt); } else rest.push(a);
+  }
+  return { rest, targets };
+}
+
+// For search/filter commands: the first positional (or -e/-Pattern value) is a PATTERN/script and is never a
+// file; every later positional, -f/-Path value, and --include/--glob filter is a file that gets READ.
+function searchArgsEnv(cmd, args) {
+  const valueOpts = new Set(S_VALUE[cmd] ?? []);
+  const norm = (n) => (n.startsWith("--") || cmd === "select-string" || cmd === "sls" ? n.toLowerCase() : n);
+  let patternSeen = false; let afterDashDash = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!afterDashDash && a === "--") { afterDashDash = true; continue; }
+    const findstrOpt = cmd === "findstr" && /^\/[a-z]+(:.*)?$/i.test(a);
+    if (!afterDashDash && (a.startsWith("-") || findstrOpt)) {
+      const sep = findstrOpt ? a.indexOf(":") : a.indexOf("=");
+      const name = norm(findstrOpt ? (sep !== -1 ? a.slice(0, sep) : a).toLowerCase() : (sep !== -1 ? a.slice(0, sep) : a));
+      const inline = sep !== -1 ? a.slice(sep + 1) : null;
+      if (S_PATTERN.has(name) || name === "/c") { patternSeen = true; if (inline === null) i++; continue; }
+      if (S_PATH.has(name) || name === "/g" || name === "/f") { const v = inline ?? args[++i] ?? ""; if (envTarget(v)) return v; continue; }
+      if (S_GLOB.has(name)) { const v = inline ?? args[++i] ?? ""; if (envTarget(v)) return v; continue; }
+      if (valueOpts.has(name) && inline === null) i++;
+      continue;
+    }
+    if (!patternSeen) { patternSeen = true; continue; } // pattern / sed or awk script: text, not a file
+    if (envTarget(a)) return a; // files to search are read
+  }
+  return null;
+}
+
+// Returns the offending token if this segment accesses a real env file, else null.
+function envAccessInSegment(tokens) {
+  const { rest, targets } = splitRedirects(tokens);
+  const redirect = targets.find(envTarget);
+  if (redirect) return redirect;
+  if (!rest.length) return null;
+  const cmd = prog(rest[0]); const args = rest.slice(1);
+
+  if (TEXT_CMDS.has(cmd)) return null; // arguments are text, not files (redirect targets checked above)
+  if (META_CMDS.has(cmd)) {
+    if (cmd === "find" && args.some((a) => /^-(exec|execdir|ok|okdir|delete|fprint\w*)$/.test(a))) return args.find(envTarget) ?? null;
+    return null; // lists names/existence only
+  }
+  if (cmd === "git") {
+    let i = 0;
+    while (i < args.length && (args[i] === "-C" || args[i] === "-c")) i += 2;
+    const sub = args[i]; const subArgs = args.slice(i + 1);
+    if (META_GIT.has(sub) || (sub === "rm" && subArgs.includes("--cached"))) return null;
+    if (sub === "grep") return searchArgsEnv("git-grep", subArgs);
+    // History/metadata subcommands: option values such as --grep=".env" are text; only `rev:path` reads content.
+    if (["log", "shortlog", "branch", "tag", "fetch", "remote", "rev-parse"].includes(sub)) {
+      return subArgs.find((a) => !a.startsWith("-") && a.includes(":") && isEnvFile(a)) ?? null;
+    }
+  }
+  if (SEARCH_CMDS.has(cmd)) return searchArgsEnv(cmd, args);
+  if (INLINE_CODE[cmd]) {
+    for (let i = 0; i < args.length; i++) {
+      if (INLINE_CODE[cmd].includes(args[i].toLowerCase())) { const ref = embeddedEnvRef(args[i + 1] ?? ""); if (ref) return ref; i++; }
+    }
+  }
+  if (SHELLS[cmd]) {
+    for (let i = 0; i < args.length; i++) {
+      if (SHELLS[cmd].includes(args[i].toLowerCase())) { const inner = args.slice(i + 1).join(" "); return envAccessInCommand(inner); }
+    }
+  }
+  // General command: any file argument or option value naming a real env file is access.
+  for (const a of args) {
+    if (a.startsWith("-")) {
+      const eq = a.indexOf("=");
+      if (eq !== -1 && envTarget(a.slice(eq + 1))) return a.slice(eq + 1);
+      continue;
+    }
+    if (envTarget(a)) return a;
+  }
+  return null;
+}
+
+// Analyze a whole command string (segments + command substitutions + interpreter heredocs) for env-file access.
+const CODE_INTERPRETER = /\b(node|python3?|py|ruby|perl|php|deno|bun)(\.exe)?\b/i;
+function envAccessInCommand(command) {
+  // Heredoc bodies fed to a code interpreter (node <<EOF ... EOF) are code: scan them for env-file references.
+  for (const m of String(command).matchAll(/^([^\n]*?)<<-?\s*(['"]?)(\w+)\2([^\n]*)\n([\s\S]*?)\n[ \t]*\3[ \t]*(?=\n|$)/gm)) {
+    if (CODE_INTERPRETER.test(m[1] + m[4])) { const ref = embeddedEnvRef(m[5]); if (ref) return ref; }
+  }
+  const subs = [...String(command).matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)].map((m) => m[1] ?? m[2]);
+  for (const seg of [command, ...subs].flatMap((c) => stripHeredocs(c).split(/&&|\|\||[;|\n]/))) {
+    const hit = envAccessInSegment(tokenize(seg.trim()));
+    if (hit) return hit;
+  }
+  return null;
+}
 
 function decide(decision, reason) {
   process.stdout.write(JSON.stringify({
@@ -180,19 +328,16 @@ const stripHeredocs = (cmd) => cmd.replace(
 );
 
 function checkShell(command, cwd) {
+  // Real env-file access (read/write/load/search-inside/redirect/inline code). Text that merely contains
+  // ".env" — search patterns, echo text, commit messages, metadata-only commands — is not access.
+  const envHit = envAccessInCommand(command);
+  if (envHit) deny(`Shell access to environment file \`${envHit}\` is not allowed. Secrets stay with the human.`);
+
   for (const seg of stripHeredocs(command).split(/&&|\|\||[;|\n]/)) {
     const t = tokenize(seg.trim()).map((tok) => (["git", "gh", "supabase", "vercel"].includes(prog(tok)) ? prog(tok) : tok));
     const rawTokens = tokenize(seg.trim());
     if (!t.length) continue;
     const segLower = seg.toLowerCase();
-
-    // Reading or exposing .env files through the shell (allow .gitignore edits, git check-ignore, git rm --cached).
-    // A `git commit` segment's arguments are message text; its staged files are checked in checkGitCommit.
-    const isCommit = t[t.indexOf("git") + 1] === "commit";
-    const envTok = isCommit ? null : t.find(isEnvFile);
-    if (envTok && !/gitignore|check-ignore|rm --cached/.test(segLower)) {
-      deny(`Shell access to environment file \`${envTok}\` is not allowed. Secrets stay with the human.`);
-    }
 
     const gi = t.indexOf("git");
     if (gi !== -1) {
