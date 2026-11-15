@@ -55,7 +55,9 @@ The Lead (main session) ran the `yogaflow-issue` skill. It delegated the build t
 - search patterns, `sed`/`awk` scripts, `echo` text, commit messages and metadata-only commands (`git check-ignore`, `ls-files`, `find` without `-exec`, `test -f`) → **allowed**;
 - file arguments, redirect targets, env globs, `--include`/`--glob` filters, `--env-file=` values, `rev:path`, `$(…)` substitutions, `bash -c`/`pwsh -Command` wrappers and inline `node -e`/heredoc code → **denied**.
 
-**Regression suite (committed):** `node .claude/hooks/guard.test.mjs` runs 99 deterministic cases, 109 with `--live`. Run against the previous guard, it shows **8 false positives fixed** (including both blocked commands) and **10 previously missed real accesses now denied**, such as `cat .env*`, `node -e "…readFileSync('.env')"` and `git show HEAD:.env`.
+**Regression suite (committed):** `node .claude/hooks/guard.test.mjs` runs 103 deterministic cases, 113 with `--live`. Run against the previous guard, it shows **8 false positives fixed** (including both blocked commands) and **10 previously missed real accesses now denied**, such as `cat .env*`, `node -e "…readFileSync('.env')"` and `git show HEAD:.env`.
+
+**Dogfooding caught one more case:** the first version of the fix blocked this PR's own creation. It scanned Markdown inline code inside the quoted-heredoc PR body as if it were shell backtick substitutions. Substitutions are now read only from live shell text: the command itself, plus the bodies of _unquoted_ heredocs, which do expand `$(…)`. Four regression cases cover both directions.
 
 **Also in this PR:** `.gitattributes` makes line endings LF on every platform, so `npm run lint` passes on Windows checkouts as well as in CI.
 

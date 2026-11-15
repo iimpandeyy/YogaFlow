@@ -57,6 +57,9 @@ console.log("# env: harmless text/search/metadata (expect ALLOW)");
   ["node -e using process.env", "Bash", `node -e "console.log(process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'unset')"`],
   ["cat .env.example", "Bash", `cat ${E}.example`],
   ["cat heredoc to file (data)", "Bash", `cat > notes.txt <<'EOF'\nsee ${E}.example\nEOF`],
+  // Found while opening the retrospective PR: Markdown inline code in a quoted heredoc is inert text.
+  ["quoted-heredoc PR body with markdown backticks", "Bash", `gh pr create --base dev --body-file - <<'EOF'\nDenied: \`grep KEY ${E}.local\`, \`$(cat ${E})\`\nEOF`],
+  ["double-quoted-heredoc body with backticks", "Bash", `gh pr comment 1 --body-file - <<"EOF"\nSee \`cat ${E}.local\`\nEOF`],
 ].forEach(([label, tool, command]) => check(label, tool, sh(command), "ALLOW"));
 
 // ---- 2. Env files: real access must still be DENIED -----------------------------------------------
@@ -86,6 +89,8 @@ console.log("# env: real secret-file access (expect DENY)");
   ["node --env-file", "Bash", `node --env-file=${E} server.js`],
   ["source env", "Bash", `source ${E}`],
   ["command substitution", "Bash", `export $(cat ${E} | xargs)`],
+  ["unquoted heredoc expands $(cat env)", "Bash", `cat > out.txt <<EOF\n$(cat ${E})\nEOF`],
+  ["unquoted heredoc expands backtick env", "Bash", `cat > out.txt <<EOF\n\`cat ${E}.local\`\nEOF`],
   ["git add env.local", "Bash", `git add ${E}.local`],
   ["git add -f env", "Bash", `git add -f ${E}`],
   ["git show rev:env", "Bash", `git show HEAD:${E}`],

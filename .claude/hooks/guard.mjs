@@ -180,7 +180,12 @@ function envAccessInCommand(command) {
   for (const m of String(command).matchAll(/^([^\n]*?)<<-?\s*(['"]?)(\w+)\2([^\n]*)\n([\s\S]*?)\n[ \t]*\3[ \t]*(?=\n|$)/gm)) {
     if (CODE_INTERPRETER.test(m[1] + m[4])) { const ref = embeddedEnvRef(m[5]); if (ref) return ref; }
   }
-  const subs = [...String(command).matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)].map((m) => m[1] ?? m[2]);
+  // Command substitutions run only in live shell text: the command with data heredocs removed, plus the
+  // bodies of UNQUOTED heredocs (<<EOF expands $(...) and `...`; <<'EOF' / <<"EOF" bodies are inert data,
+  // e.g. a Markdown PR body full of inline code).
+  const unquotedBodies = [...String(command).matchAll(/<<-?\s*(\w+)[^\n]*\n([\s\S]*?)\n[ \t]*\1[ \t]*(?=\n|$)/g)].map((m) => m[2]);
+  const live = [stripHeredocs(command), ...unquotedBodies].join("\n");
+  const subs = [...live.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)].map((m) => m[1] ?? m[2]);
   for (const seg of [command, ...subs].flatMap((c) => stripHeredocs(c).split(/&&|\|\||[;|\n]/))) {
     const hit = envAccessInSegment(tokenize(seg.trim()));
     if (hit) return hit;
