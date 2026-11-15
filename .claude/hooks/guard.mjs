@@ -7,7 +7,9 @@
 //   qa-reviewer PASS and no open escalation (CLAUDE.md §3).
 // - No branch-protection bypass: no --no-verify, no force-push to protected branches, no --all/--mirror, no --admin.
 // - Secrets: no reading/writing `.env*` (except .env.example); no committing .env files or secret-looking values;
-//   no writing secret-looking values into any file.
+//   no writing secret-looking values into any file. Exception (maskSearchPatterns): the PATTERN argument of a
+//   search command (grep/rg/git grep/Select-String) is text, so `grep '\.env' file` is not env-file access.
+//   Every other token is checked exactly as before. Tests: .claude/hooks/guard.test.mjs.
 // - Production: no production Supabase migrations/pushes or Vercel production deploys by the agent.
 // Output: PreToolUse JSON decision on stdout ("deny" or "ask"); exit 0. Silent exit 0 = no opinion.
 
@@ -179,7 +181,89 @@ const stripHeredocs = (cmd) => cmd.replace(
   (m, pre, _q, _tag, post) => (INTERPRETER.test(pre + post) ? m : `${pre}<<HEREDOC${post}`),
 );
 
-function checkShell(command, cwd) {
+// ---- Search-pattern masking (the only relaxation of the env-file check) ------------------------------
+// A search command's PATTERN argument is text, never a file: `ls -a | grep -i '^\.env'` must not count as
+// env-file access. Before the normal checks run, the pattern token is replaced with a placeholder; every other
+// token (files to search, -Path values, other commands) is checked exactly as before. Conservative by design:
+// if the pattern could come from anywhere else (-f/--file pattern files, attached -eKEY / --regexp=, unknown
+// layouts), nothing is masked. sed/awk are not masked because their scripts can open files.
+// Fail-closed option allowlists per search family. Masking happens only when EVERY option is known; an unknown
+// option (it might take a value, or open a file: --iglob, --type-add, --ignore-file, --exclude-from, --pre, -LP...)
+// means no masking, i.e. the unchanged old checks apply.
+const S = (s) => new Set(s.split(" "));
+const SEARCH_FAMILIES = {
+  grep: { short: "inrRlLcvwxoqshHEFGPaIzZbUT", long: S("--ignore-case --line-number --recursive --dereference-recursive --files-with-matches --files-without-match --count --invert-match --word-regexp --line-regexp --only-matching --quiet --silent --no-filename --with-filename --extended-regexp --fixed-strings --basic-regexp --perl-regexp --text --null --null-data --byte-offset --no-messages --color --colour"), value: S("-A -B -C -m") },
+  rg: { short: "inlcvwxoqsSFuLHNzUPa", long: S("--ignore-case --smart-case --case-sensitive --fixed-strings --line-number --no-line-number --no-heading --heading --count --count-matches --files-with-matches --files-without-match --invert-match --word-regexp --line-regexp --only-matching --quiet --hidden --no-ignore --follow --json --vimgrep --multiline --pcre2 --no-messages --text --color --colour"), value: S("-A -B -C -m -t -T -M -j -r --type --type-not --max-count --context --after-context --before-context --max-depth --max-columns --replace") },
+  "git-grep": { short: "nilcvwEFPhHIoqz", long: S("--cached --untracked --no-index --line-number --ignore-case --files-with-matches --count --invert-match --word-regexp --extended-regexp --fixed-strings --perl-regexp --only-matching --quiet --heading --break --color --colour"), value: S("-A -B -C -m --max-depth --max-count --context") },
+  ps: { long: S("-simplematch -casesensitive -notmatch -allmatches -list -quiet -raw -noemphasis"), value: S("-path -literalpath -context -encoding -include -exclude") },
+};
+SEARCH_FAMILIES.egrep = SEARCH_FAMILIES.grep; SEARCH_FAMILIES.fgrep = SEARCH_FAMILIES.grep;
+
+// Index of the pattern token in a search-command stage, or -1 when it cannot be identified safely.
+function searchPatternIndex(tokens) {
+  const p = prog(tokens[0] ?? "");
+  let i = 1; let fam;
+  if (p === "git" && tokens[1] === "grep") { i = 2; fam = "git-grep"; }
+  else if (p === "select-string" || p === "sls") fam = "ps";
+  else if (["grep", "egrep", "fgrep", "rg"].includes(p)) fam = p;
+  else return -1;
+  const F = SEARCH_FAMILIES[fam]; const ps = fam === "ps";
+  let pattern = -1;
+  for (let j = i; j < tokens.length; j++) {
+    const a = tokens[j];
+    if (!ps && a === "--") { if (pattern === -1 && j + 1 < tokens.length) pattern = j + 1; break; }
+    if (!a.startsWith("-")) { if (pattern === -1) pattern = j; continue; } // first positional = pattern
+    const name = ps ? a.toLowerCase() : a;
+    if (ps ? name === "-pattern" : name === "-e" || name === "--regexp") { if (pattern !== -1 || j + 1 >= tokens.length) return -1; pattern = j + 1; j++; continue; }
+    if (F.value.has(name)) { j++; continue; }
+    if (F.long.has(name) || (!ps && /^--(color|colour)=\w+$/.test(name))) continue;
+    if (!ps && /^-[A-Za-z]+$/.test(name) && [...name.slice(1)].every((c) => F.short.includes(c))) continue; // combined known flags
+    return -1; // unknown option (incl. -f, -eKEY, --file=, --regexp=, -LP ...): fail closed, no masking
+  }
+  return pattern;
+}
+// Never mask a token the shell would still EXPAND or EXECUTE: $(...), `...`, $VAR, <(...), >(...).
+const executesInside = (raw) => /[$`]|[<>]\(/.test(raw);
+
+// Stages that may follow a masked search stage: text filters that never open the names they receive.
+// If anything else follows (xargs, Get-Content, cat, a shell, ...), the matched names could be opened, so the
+// pattern is NOT masked (e.g. `ls -a | grep '^\.env' | xargs cat` stays denied, as before).
+const SAFE_FILTERS = new Set(["head", "tail", "wc", "sort", "uniq", "cut", "tr", "nl", "less", "more", "grep", "egrep", "fgrep", "rg",
+  "select-object", "select", "measure-object", "measure", "sort-object", "out-null", "out-string", "out-host", "format-table", "ft", "format-list", "fl"]);
+
+// Replace each search command's pattern token with a placeholder (quote-aware stage scan; offsets preserved).
+function maskSearchPatterns(cmd) {
+  const pipelines = [[]]; let start = 0; let quote = null; // pipelines of [start, end] stage spans
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i];
+    if (quote) { if (c === quote) quote = null; continue; }
+    if (c === "'" || c === '"') { quote = c; continue; }
+    if (c === "|") { pipelines[pipelines.length - 1].push([start, i]); start = i + 1; }
+    else if (c === ";" || c === "\n" || c === "&") { pipelines[pipelines.length - 1].push([start, i]); pipelines.push([]); start = i + 1; }
+  }
+  pipelines[pipelines.length - 1].push([start, cmd.length]);
+  const tokensOf = ([s, e]) => [...cmd.slice(s, e).matchAll(/"[^"]*"|'[^']*'|\S+/g)];
+  const unquote = (m) => m[0].replace(/^(['"])([\s\S]*)\1$/, "$2");
+  const edits = [];
+  for (const stages of pipelines) {
+    stages.forEach(([s, e], k) => {
+      const toks = tokensOf([s, e]);
+      const idx = searchPatternIndex(toks.map(unquote));
+      if (idx === -1 || executesInside(toks[idx][0])) return;
+      const laterSafe = stages.slice(k + 1).every((span) => {
+        const first = tokensOf(span)[0];
+        return !first || SAFE_FILTERS.has(prog(unquote(first)));
+      });
+      if (laterSafe) edits.push([s + toks[idx].index, s + toks[idx].index + toks[idx][0].length]);
+    });
+  }
+  let out = cmd;
+  for (const [a, b] of edits.reverse()) out = `${out.slice(0, a)}__SEARCH_PATTERN__${out.slice(b)}`;
+  return out;
+}
+
+function checkShell(rawCommand, cwd) {
+  const command = maskSearchPatterns(rawCommand);
   for (const seg of stripHeredocs(command).split(/&&|\|\||[;|\n]/)) {
     const t = tokenize(seg.trim()).map((tok) => (["git", "gh", "supabase", "vercel"].includes(prog(tok)) ? prog(tok) : tok));
     const rawTokens = tokenize(seg.trim());

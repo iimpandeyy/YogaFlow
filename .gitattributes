@@ -1,0 +1,15 @@
+# Normalize line endings to LF on every platform. Prettier (`npm run lint`) enforces LF, and
+# Git for Windows defaults to core.autocrlf=true, which would otherwise check files out as CRLF.
+* text=auto eol=lf
+
+# Binary files: never convert.
+*.docx binary
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary

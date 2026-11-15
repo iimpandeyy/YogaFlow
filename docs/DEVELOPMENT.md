@@ -39,6 +39,7 @@ Report them as `N/A — scripts not yet created (#7)`. Never report them as pass
 | Unit/component tests | `npm run test` | **Yes** |
 | Production build | `npm run build` | **Yes** |
 | End-to-end tests | `npm run test:e2e` (#7 scaffolds the script; #21 adds the flow tests) | Yes, for flow-affecting work once the tests exist |
+| Guard-hook regression tests | `node .claude/hooks/guard.test.mjs` (add `--live` for identity and live-PR cases) | **Yes**, whenever `.claude/hooks/guard.mjs` or `.claude/settings.json` changes |
 
 Test data rules:
 - Unit and component tests use local deterministic fixtures and mocks. They never connect to Supabase.
