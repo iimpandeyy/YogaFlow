@@ -1,0 +1,17 @@
+# Generated and dependency output
+node_modules/
+.next/
+out/
+build/
+coverage/
+playwright-report/
+test-results/
+blob-report/
+playwright/.cache/
+next-env.d.ts
+package-lock.json
+
+# Governance and planning documents are kept as authored (not reformatted by Prettier)
+CLAUDE.md
+docs/
+.claude/

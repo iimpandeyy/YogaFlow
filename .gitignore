@@ -5,3 +5,21 @@
 
 # Claude Code personal/local settings
 .claude/settings.local.json
+
+# Dependencies and build output
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+blob-report/
+playwright/.cache/
+
+# OS and logs
+.DS_Store
+npm-debug.log*
