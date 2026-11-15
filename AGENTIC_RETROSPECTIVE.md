@@ -55,13 +55,27 @@ The Lead (main session) ran the `yogaflow-issue` skill. It delegated the build t
 - search patterns, `sed`/`awk` scripts, `echo` text, commit messages and metadata-only commands (`git check-ignore`, `ls-files`, `find` without `-exec`, `test -f`) → **allowed**;
 - file arguments, redirect targets, env globs, `--include`/`--glob` filters, `--env-file=` values, `rev:path`, `$(…)` substitutions, `bash -c`/`pwsh -Command` wrappers and inline `node -e`/heredoc code → **denied**.
 
-**Regression suite (committed):** `node .claude/hooks/guard.test.mjs` runs 103 deterministic cases, 113 with `--live`. Run against the previous guard, it shows **8 false positives fixed** (including both blocked commands) and **10 previously missed real accesses now denied**, such as `cat .env*`, `node -e "…readFileSync('.env')"` and `git show HEAD:.env`.
+**Regression suite (committed):** `node .claude/hooks/guard.test.mjs` runs 144 deterministic cases, 154 with `--live`. Run against the previous guard, it shows **12 false positives fixed** (including both blocked commands) and **17 previously missed real accesses now denied**, such as `cat .env*`, `node -e "…readFileSync('.env')"`, `git show HEAD:.env` and `Get-Content -Path:.env`.
 
-**Dogfooding caught one more case:** the first version of the fix blocked this PR's own creation. It scanned Markdown inline code inside the quoted-heredoc PR body as if it were shell backtick substitutions. Substitutions are now read only from live shell text: the command itself, plus the bodies of _unquoted_ heredocs, which do expand `$(…)`. Four regression cases cover both directions.
+**Independent review caught regressions in my first fix.** On PR #29, `architecture-security-reviewer` returned CHANGES REQUESTED and `qa-reviewer` returned FAIL. My suite passed, but in two places the first version allowed real reads that the old guard blocked:
+
+- a listing or text stage piped into a reader (`find . -name .env | xargs cat`, `Get-ChildItem .env | Get-Content`);
+- a pattern supplied by an option, so the file argument was read as the pattern (`grep -f pats.txt .env`, `sed -f`, `awk -f`).
+
+`git log -p .env` had also regressed. All of these are fixed: pipelines are now analyzed stage by stage, with quote-aware splitting, and pattern options are classified correctly. Each reported command is now a regression case. That was the gate working as intended: the implementer's own tests weren't treated as evidence.
+
+**Dogfooding caught two more cases:**
+
+- **The PR body was read as code.** The first version of the fix blocked this PR's own creation. It scanned Markdown inline code inside the quoted-heredoc PR body as if it were shell backtick substitutions. Substitutions are now read only from live shell text: the command itself, plus the bodies of _unquoted_ heredocs, which do expand `$(…)`.
+- **A commit message was read as code.** A later commit was blocked because the guard decided whether a heredoc feeds an interpreter from the whole line, so `node … && git commit -F - <<EOF` treated the commit message as Node code. The guard now checks the heredoc's actual receiving command, including `cat <<EOF | bash`.
+
+Both have regression cases in each direction.
 
 **Also in this PR:** `.gitattributes` makes line endings LF on every platform, so `npm run lint` passes on Windows checkouts as well as in CI.
 
 **Lesson for QA:** verify in a fresh checkout (`git clone` or a re-checkout), not only in the working tree the implementer used.
+
+**Known gap, not addressed here:** the hook matcher doesn't include the Grep/Glob tools. That's pre-existing and needs a separate decision.
 
 **Open for the next retrospective:**
 

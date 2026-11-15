@@ -72,13 +72,15 @@ function embeddedEnvRef(code) {
 const SEARCH_CMDS = new Set(["grep", "egrep", "fgrep", "rg", "ag", "findstr", "select-string", "sls", "sed", "awk"]);
 const TEXT_CMDS = new Set(["echo", "printf", "write-output", "write-host", "write-verbose", ":"]);
 const META_CMDS = new Set(["ls", "dir", "gci", "get-childitem", "test-path", "test", "[", "stat", "find"]);
-const META_GIT = new Set(["check-ignore", "ls-files", "status", "commit"]); // commit: staged files checked in checkGitCommit
+const META_GIT = new Set(["check-ignore", "ls-files", "status"]); // names/state only (commit is handled separately)
 const INLINE_CODE = { node: ["-e", "-p", "--eval", "--print"], deno: ["eval"], bun: ["-e", "--eval"], python: ["-c"], python3: ["-c"], py: ["-c"], ruby: ["-e"], perl: ["-e", "-E"], php: ["-r"] };
 const SHELLS = { bash: ["-c"], sh: ["-c"], zsh: ["-c"], dash: ["-c"], pwsh: ["-c", "-command"], powershell: ["-c", "-command"], cmd: ["/c", "/k"] };
 // Search-command option roles. Short options are case-sensitive (`grep -c` counts, `grep -C 3` takes a value);
 // long and PowerShell options are compared lower-cased. Unknown options are treated as value-less flags.
-const S_PATTERN = new Set(["-e", "--regexp", "-pattern", "--pattern"]);
-const S_PATH = new Set(["-f", "--file", "-path", "-literalpath"]); // files that are READ (pattern files, scripts, inputs)
+const S_PATTERN = new Set(["-e", "--regexp", "-pattern", "--pattern", "--expression"]); // value IS the pattern/script
+const S_PATTERN_FILE = new Set(["-f", "--file"]); // value is a pattern/script FILE: it is read AND supplies the pattern
+const S_PATH = new Set(["-path", "-literalpath"]); // Select-String files to search (read)
+const COMBINABLE = new Set(["grep", "egrep", "fgrep", "rg", "git-grep", "sed", "awk"]); // `-ne PAT`, `-eKEY`, `-fFILE`
 const S_GLOB = new Set(["--include", "-g", "--glob", "-include", "--iglob"]); // file filters: env globs = reading env files
 const S_VALUE = {
   grep: ["-A", "-B", "-C", "-m", "-d", "-D", "--max-count", "--context", "--after-context", "--before-context", "--exclude", "--exclude-dir", "--label"],
@@ -111,11 +113,21 @@ function searchArgsEnv(cmd, args) {
     if (!afterDashDash && a === "--") { afterDashDash = true; continue; }
     const findstrOpt = cmd === "findstr" && /^\/[a-z]+(:.*)?$/i.test(a);
     if (!afterDashDash && (a.startsWith("-") || findstrOpt)) {
-      const sep = findstrOpt ? a.indexOf(":") : a.indexOf("=");
-      const name = norm(findstrOpt ? (sep !== -1 ? a.slice(0, sep) : a).toLowerCase() : (sep !== -1 ? a.slice(0, sep) : a));
-      const inline = sep !== -1 ? a.slice(sep + 1) : null;
+      // Value separator: findstr `/g:file`; PowerShell `-Path:file`; otherwise `--opt=value`.
+      const psStyle = cmd === "select-string" || cmd === "sls";
+      const sep = findstrOpt ? a.indexOf(":") : psStyle ? a.search(/[=:]/) : a.indexOf("=");
+      let name = norm(findstrOpt ? (sep !== -1 ? a.slice(0, sep) : a).toLowerCase() : (sep !== -1 ? a.slice(0, sep) : a));
+      let inline = sep !== -1 ? a.slice(sep + 1) : null;
+      // Short-option forms for grep/rg/git grep/sed/awk: combined flags ending in e/f take the next arg
+      // (`-ne PAT`, `-rf FILE`); attached values (`-eKEY`, `-fpats.txt`).
+      if (COMBINABLE.has(cmd) && !a.startsWith("--") && a.length > 2) {
+        const combined = /^-[A-Za-z]*([ef])$/.exec(a);
+        const attached = /^-([ef])(.+)$/.exec(a);
+        if (combined) { name = `-${combined[1]}`; inline = null; } else if (attached) { name = `-${attached[1]}`; inline = attached[2]; }
+      }
       if (S_PATTERN.has(name) || name === "/c") { patternSeen = true; if (inline === null) i++; continue; }
-      if (S_PATH.has(name) || name === "/g" || name === "/f") { const v = inline ?? args[++i] ?? ""; if (envTarget(v)) return v; continue; }
+      if (S_PATTERN_FILE.has(name) || name === "/g") { patternSeen = true; const v = inline ?? args[++i] ?? ""; if (envTarget(v)) return v; continue; }
+      if (S_PATH.has(name) || name === "/f") { const v = inline ?? args[++i] ?? ""; if (envTarget(v)) return v; continue; }
       if (S_GLOB.has(name)) { const v = inline ?? args[++i] ?? ""; if (envTarget(v)) return v; continue; }
       if (valueOpts.has(name) && inline === null) i++;
       continue;
@@ -143,10 +155,17 @@ function envAccessInSegment(tokens) {
     let i = 0;
     while (i < args.length && (args[i] === "-C" || args[i] === "-c")) i += 2;
     const sub = args[i]; const subArgs = args.slice(i + 1);
+    // git commit: message text is not access, but a pathspec (`git commit .env -m x`) commits that file.
+    if (sub === "commit") return positionalEnv(subArgs, /^(-[a-zA-Z]*[mFCct]|--(message|file|reuse-message|reedit-message|author|date|fixup|squash|template|trailer|cleanup))$/);
     if (META_GIT.has(sub) || (sub === "rm" && subArgs.includes("--cached"))) return null;
     if (sub === "grep") return searchArgsEnv("git-grep", subArgs);
-    // History/metadata subcommands: option values such as --grep=".env" are text; only `rev:path` reads content.
-    if (["log", "shortlog", "branch", "tag", "fetch", "remote", "rev-parse"].includes(sub)) {
+    // git log/shortlog: option values (--grep=".env", --author X) are text; a pathspec or rev:path shows content.
+    if (sub === "log" || sub === "shortlog") {
+      return positionalEnv(subArgs, /^(-n|-S|-G|--(grep|author|committer|max-count|since|until|after|before|format|pretty|skip|date))$/)
+        ?? subArgs.find((a) => a.includes(":") && isEnvFile(a)) ?? null;
+    }
+    // Other ref/metadata subcommands: only `rev:path` reads content.
+    if (["branch", "tag", "fetch", "remote", "rev-parse"].includes(sub)) {
       return subArgs.find((a) => !a.startsWith("-") && a.includes(":") && isEnvFile(a)) ?? null;
     }
   }
@@ -161,11 +180,11 @@ function envAccessInSegment(tokens) {
       if (SHELLS[cmd].includes(args[i].toLowerCase())) { const inner = args.slice(i + 1).join(" "); return envAccessInCommand(inner); }
     }
   }
-  // General command: any file argument or option value naming a real env file is access.
+  // General command: any file argument or option value (`--opt=v`, PowerShell `-Path:v`) naming a real env file.
   for (const a of args) {
     if (a.startsWith("-")) {
-      const eq = a.indexOf("=");
-      if (eq !== -1 && envTarget(a.slice(eq + 1))) return a.slice(eq + 1);
+      const sep = a.search(/[=:]/);
+      if (sep !== -1 && envTarget(a.slice(sep + 1))) return a.slice(sep + 1);
       continue;
     }
     if (envTarget(a)) return a;
@@ -173,12 +192,47 @@ function envAccessInSegment(tokens) {
   return null;
 }
 
+// Positional (non-option) arguments that name an env file, skipping the values of options matched by
+// `valueOpt` (e.g. `-m "msg"`). Arguments after `--` are always positional.
+function positionalEnv(args, valueOpt) {
+  let afterDashDash = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!afterDashDash && a === "--") { afterDashDash = true; continue; }
+    if (!afterDashDash && a.startsWith("-")) { if (valueOpt.test(a)) i++; continue; }
+    if (envTarget(a)) return a;
+  }
+  return null;
+}
+
+// Quote-aware split of a command into statements (`&&`, `||`, `;`, newline), each a list of pipeline
+// stages (`|`). Separators inside '...' or "..." are text, e.g. the pattern in grep -E 'a|\.env|b'.
+function splitShell(cmd) {
+  const statements = []; let stages = []; let cur = ""; let quote = null;
+  const endStatement = () => { stages.push(cur); statements.push(stages); stages = []; cur = ""; };
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i]; const n = cmd[i + 1];
+    if (quote) { cur += c; if (c === quote) quote = null; continue; }
+    if (c === "'" || c === '"') { quote = c; cur += c; continue; }
+    if ((c === "&" && n === "&") || (c === "|" && n === "|")) { endStatement(); i++; continue; }
+    if (c === ";" || c === "\n") { endStatement(); continue; }
+    if (c === "|") { stages.push(cur); cur = ""; continue; }
+    cur += c;
+  }
+  endStatement();
+  return statements;
+}
+
+// Pipeline stages that READ file names from stdin / pipeline input and then open those files.
+const PIPE_CONSUMERS = new Set(["xargs", "while", "read", "foreach-object", "%", "foreach", "get-content", "gc", "cat", "type",
+  "copy-item", "cp", "mv", "move-item", "select-string", "sls", "source", ".", ...Object.keys(SHELLS), ...Object.keys(INLINE_CODE)]);
+const namesEnv = (tokens) => tokens.find(envTarget) ?? null;
+
 // Analyze a whole command string (segments + command substitutions + interpreter heredocs) for env-file access.
-const CODE_INTERPRETER = /\b(node|python3?|py|ruby|perl|php|deno|bun)(\.exe)?\b/i;
 function envAccessInCommand(command) {
-  // Heredoc bodies fed to a code interpreter (node <<EOF ... EOF) are code: scan them for env-file references.
+  // Heredoc bodies received by a code interpreter (node <<EOF ... EOF) are code: scan them for env-file references.
   for (const m of String(command).matchAll(/^([^\n]*?)<<-?\s*(['"]?)(\w+)\2([^\n]*)\n([\s\S]*?)\n[ \t]*\3[ \t]*(?=\n|$)/gm)) {
-    if (CODE_INTERPRETER.test(m[1] + m[4])) { const ref = embeddedEnvRef(m[5]); if (ref) return ref; }
+    if (heredocReceivers(m[1], m[4]).some((r) => CODE_RUNNERS.has(r))) { const ref = embeddedEnvRef(m[5]); if (ref) return ref; }
   }
   // Command substitutions run only in live shell text: the command with data heredocs removed, plus the
   // bodies of UNQUOTED heredocs (<<EOF expands $(...) and `...`; <<'EOF' / <<"EOF" bodies are inert data,
@@ -186,9 +240,16 @@ function envAccessInCommand(command) {
   const unquotedBodies = [...String(command).matchAll(/<<-?\s*(\w+)[^\n]*\n([\s\S]*?)\n[ \t]*\1[ \t]*(?=\n|$)/g)].map((m) => m[2]);
   const live = [stripHeredocs(command), ...unquotedBodies].join("\n");
   const subs = [...live.matchAll(/\$\(([^()]*)\)|`([^`]*)`/g)].map((m) => m[1] ?? m[2]);
-  for (const seg of [command, ...subs].flatMap((c) => stripHeredocs(c).split(/&&|\|\||[;|\n]/))) {
-    const hit = envAccessInSegment(tokenize(seg.trim()));
-    if (hit) return hit;
+  for (const statement of [command, ...subs].flatMap((c) => splitShell(stripHeredocs(c)))) {
+    const stages = statement.map((s) => tokenize(s.trim()));
+    for (let i = 0; i < stages.length; i++) {
+      const hit = envAccessInSegment(stages[i]);
+      if (hit) return hit;
+      // A stage that only lists/prints/matches env file names is harmless on its own, but not when a later
+      // stage consumes those names as files (`find . -name .env | xargs cat`, `gci .env | Get-Content`).
+      const named = i < stages.length - 1 ? namesEnv(stages[i]) : null;
+      if (named && stages.slice(i + 1).some((s) => s.length && PIPE_CONSUMERS.has(prog(s[0])))) return named;
+    }
   }
   return null;
 }
@@ -326,10 +387,18 @@ const prog = (tok) => path.basename(String(tok).replace(/\\/g, "/")).replace(/\.
 
 // Heredoc bodies are data (e.g. commit messages), not commands: drop them before analysis,
 // unless the heredoc feeds a shell/interpreter, in which case its body is analyzed as commands.
-const INTERPRETER = /(^|[\s/\\&|;(])(ba|z|da|k)?sh(\.exe)?\b|pwsh|powershell|\bnode\b|python|\bcmd\b|xargs|\beval\b|\bsource\b/i;
+// Which commands RECEIVE a heredoc: the last pipeline stage before `<<` (not earlier chained commands such as
+// `node x && git commit -F - <<EOF`), plus any stages it pipes into on the same line (`cat <<EOF | bash`).
+const CODE_RUNNERS = new Set(["node", "python", "python3", "py", "ruby", "perl", "php", "deno", "bun"]);
+const SHELL_RUNNERS = new Set(["bash", "sh", "zsh", "dash", "ksh", "pwsh", "powershell", "cmd", "xargs", "eval", "source", ".", ...CODE_RUNNERS]);
+function heredocReceivers(pre, post) {
+  const lastStatement = splitShell(pre).pop() ?? [""];
+  const piped = (splitShell(post)[0] ?? []).slice(1); // `<<EOF | bash` → [" bash"]
+  return [lastStatement[lastStatement.length - 1], ...piped].map((s) => tokenize(String(s).trim())[0]).filter(Boolean).map(prog);
+}
 const stripHeredocs = (cmd) => cmd.replace(
   /^([^\n]*?)<<-?\s*(['"]?)(\w+)\2([^\n]*)\n[\s\S]*?\n[ \t]*\3[ \t]*(?=\n|$)/gm,
-  (m, pre, _q, _tag, post) => (INTERPRETER.test(pre + post) ? m : `${pre}<<HEREDOC${post}`),
+  (m, pre, _q, _tag, post) => (heredocReceivers(pre, post).some((r) => SHELL_RUNNERS.has(r)) ? m : `${pre}<<HEREDOC${post}`),
 );
 
 function checkShell(command, cwd) {
