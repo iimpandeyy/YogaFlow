@@ -55,8 +55,6 @@ console.log("# env: harmless text/search/metadata (expect ALLOW)");
   ["find by name (no exec)", "Bash", `find . -name '${E}*' -not -path './node_modules/*'`],
   ["test -f existence check", "Bash", `test -f ${E} && echo present`],
   ["node -e using process.env", "Bash", `node -e "console.log(process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'unset')"`],
-  ["commit message mentioning env", "Bash", `git commit -m "Ignore ${E}.local and ${E} files"`],
-  ["commit heredoc mentioning env", "Bash", `git commit -q -F - <<'EOF'\nTitle\n\n- no ${E} access\n- (x | y)\nEOF`],
   ["cat .env.example", "Bash", `cat ${E}.example`],
   ["cat heredoc to file (data)", "Bash", `cat > notes.txt <<'EOF'\nsee ${E}.example\nEOF`],
 ].forEach(([label, tool, command]) => check(label, tool, sh(command), "ALLOW"));
@@ -147,6 +145,15 @@ console.log("# commit-time scan (throwaway repo)");
   record(commit() === "DENY", commit(), "no author email configured");
   g("config", "user.email", "yyogaaflow@gmail.com");
   g("config", "user.name", "YogaFlow AiDev");
+  // Commit messages that merely mention env files are text (hermetic: this repo sets its own author).
+  const msgCases = [
+    ["commit -m mentioning env (text)", `git commit -m "Ignore ${E}.local and ${E} files"`],
+    ["commit heredoc mentioning env (text)", `git commit -q -F - <<'EOF'\nTitle\n\n- no ${E} access\n- (x | y)\nEOF`],
+  ];
+  for (const [label, command] of msgCases) {
+    const got = runGuard("Bash", sh(command), dir);
+    record(got === "ALLOW", got, label);
+  }
   fs.writeFileSync(path.join(dir, E), "X=1\n");
   g("add", "-f", E);
   record(commit() === "DENY", commit(), "staged env file");
