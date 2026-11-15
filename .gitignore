@@ -1,0 +1,7 @@
+# Secrets: never commit environment files (only .env.example, names only)
+.env
+.env.*
+!.env.example
+
+# Claude Code personal/local settings
+.claude/settings.local.json
