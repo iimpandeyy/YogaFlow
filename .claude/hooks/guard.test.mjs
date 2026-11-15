@@ -26,12 +26,19 @@ const record = (ok, got, label) => {
   if (ok) pass++;
   console.log(`${ok ? "ok      " : "MISMATCH"} ${String(got).padEnd(6)}${label}`);
 };
-const runGuard = (tool_name, tool_input, cwd = REPO) => {
+// Deterministic cases run in a throwaway git repo with the agent author configured, so results never depend
+// on the checkout they run in (a fresh clone has no local user.email). Only --live cases use the real repo.
+const HERMETIC = fs.mkdtempSync(path.join(os.tmpdir(), "guard-hermetic-"));
+execFileSync("git", ["init", "-q"], { cwd: HERMETIC });
+execFileSync("git", ["config", "user.email", "yyogaaflow@gmail.com"], { cwd: HERMETIC });
+execFileSync("git", ["config", "user.name", "YogaFlow AiDev"], { cwd: HERMETIC });
+process.on("exit", () => fs.rmSync(HERMETIC, { recursive: true, force: true }));
+const runGuard = (tool_name, tool_input, cwd = HERMETIC) => {
   const out = execFileSync("node", [GUARD], { input: JSON.stringify({ tool_name, tool_input, cwd }), encoding: "utf8" });
   return out ? JSON.parse(out).hookSpecificOutput.permissionDecision.toUpperCase() : "ALLOW";
 };
-const check = (label, tool, input, want) => {
-  const got = runGuard(tool, input);
+const check = (label, tool, input, want, cwd = HERMETIC) => {
+  const got = runGuard(tool, input, cwd);
   record(got === want, got, label);
 };
 
@@ -61,6 +68,12 @@ console.log("# env: harmless text/search/metadata (expect ALLOW)");
   ["rg --files | rg pattern (last stage)", "Bash", `rg --files | rg '\\${E}'`],
   ["quoted pipe inside grep -E pattern", "Bash", `git log --oneline | grep -E 'eyJ|\\${E}|x' | head -5`],
   ["git log --grep value (space-separated)", "Bash", `git log --oneline --grep "${E} files"`],
+  ["names piped only into safe filters", "Bash", `ls -a | grep -i '\\${E}' | sort | head -5`],
+  ["echo names | tee list (writes names only)", "Bash", `echo ${E} | tee list.txt`],
+  ["2>&1 | grep pattern", "Bash", `npm run build 2>&1 | grep -n '\\${E}'`],
+  ["PS call operator with env text in pattern", "PowerShell", `& "C:\\Program Files\\Git\\cmd\\git.exe" log --oneline --grep="${E}"`],
+  ["wrapped git commit heredoc (data)", "Bash", `timeout 60 git commit -q -F - <<'EOF'\nno ${E} access\nEOF`],
+  ["PS Where-Object name filter (metadata)", "PowerShell", `Get-ChildItem -Force | Where-Object Name -like '${E}*' | Select-Object Name`],
   ["cat heredoc to file (data)", "Bash", `cat > notes.txt <<'EOF'\nsee ${E}.example\nEOF`],
   // Found while opening the retrospective PR: Markdown inline code in a quoted heredoc is inert text.
   ["quoted-heredoc PR body with markdown backticks", "Bash", `gh pr create --base dev --body-file - <<'EOF'\nDenied: \`grep KEY ${E}.local\`, \`$(cat ${E})\`\nEOF`],
@@ -138,6 +151,20 @@ console.log("# env: real secret-file access (expect DENY)");
   ["git log --all -p env", "Bash", `git log --all -p ${E}`],
   ["PS Get-Content -Path:env", "PowerShell", `Get-Content -Path:${E}`],
   ["PS Select-String -Path:env", "PowerShell", `Select-String -Pattern K -Path:${E}`],
+  // From the PR #29 round-2 review: wrappers before the heredoc receiver; splitter gaps; unlisted readers.
+  ["sudo bash heredoc cat env", "Bash", `sudo bash <<'EOF'\ncat ${E}\nEOF`],
+  ["env bash heredoc cat env", "Bash", `env bash <<'EOF'\ncat ${E}\nEOF`],
+  ["command bash heredoc cat env", "Bash", `command bash <<'EOF'\ncat ${E}\nEOF`],
+  ["heredoc | sudo bash cat env", "Bash", `cat <<'EOF' | sudo bash\ncat ${E}\nEOF`],
+  ["env bash -c cat env", "Bash", `env bash -c 'cat ${E}'`],
+  ["background & then cat env", "Bash", `ls & cat ${E}`],
+  ["echo & cat env", "Bash", `echo hi & cat ${E}`],
+  ["find |& xargs cat", "Bash", `find . -name ${E} |& xargs cat`],
+  ["escaped quote then ; cat env", "Bash", `echo "a\\"b" ; cat ${E}`],
+  ["find | parallel cat", "Bash", `find . -name ${E} | parallel cat`],
+  ["find | tar -T -", "Bash", `find . -name ${E} | tar -cf x.tar -T -`],
+  ["find | bat", "Bash", `find . -name ${E} | bat`],
+  ["PS gci | Import-Csv", "PowerShell", `gci ${E} | Import-Csv`],
   ["git commit env pathspec first", "Bash", `git commit ${E} -m x`],
   ["git commit env pathspec last", "Bash", `git commit -m x ${E}`],
   ["Read tool env.local", "Read", null],
@@ -161,6 +188,11 @@ console.log("# branches / bypass / secrets / production");
   ["PS git.exe full path push main", "PowerShell", sh('& "C:\\Program Files\\Git\\cmd\\git.exe" push origin main'), "DENY"],
   ["heredoc then push main", "Bash", sh("git commit -F - <<'EOF'\nmsg\nEOF\ngit push origin main"), "DENY"],
   ["bash heredoc hiding push main", "Bash", sh("bash <<'EOF'\ngit push origin main\nEOF"), "DENY"],
+  // From the PR #29 round-2 review: wrapper before the heredoc receiver must not hide branch/merge rules.
+  ["timeout bash heredoc push main", "Bash", sh("timeout 600 bash <<'EOF'\ngit push origin main\nEOF"), "DENY"],
+  ["timeout bash heredoc merge --admin", "Bash", sh("timeout 600 bash <<'EOF'\ngh pr merge 29 --admin\nEOF"), "DENY"],
+  ["nohup bash heredoc push --no-verify", "Bash", sh("nohup bash <<'EOF'\ngit push --no-verify origin aidev/x\nEOF"), "DENY"],
+  ["env bash heredoc force-push dev", "Bash", sh("env CI=1 bash <<'EOF'\ngit push --force origin dev\nEOF"), "ASK"],
   ["commit --no-verify", "Bash", sh("git commit --no-verify -m x"), "DENY"],
   ["commit --author override", "Bash", sh('git commit --author="Someone <x@y.z>" -m x'), "DENY"],
   ["commit -c user.email override", "Bash", sh("git -c user.email=x@y.z commit -m x"), "DENY"],
@@ -261,7 +293,7 @@ if (LIVE) {
     ["gh pr merge 27 (dev, no gate comment)", "Bash", sh(`"${GH}" pr merge 27 --merge`), "DENY"],
     ["gh pr merge 2 (base staging)", "Bash", sh(`"${GH}" pr merge 2 --merge`), "DENY"],
     ["gh pr merge 99999 (unknown)", "Bash", sh(`"${GH}" pr merge 99999`), ID("ASK")],
-  ].forEach(([label, tool, input, want]) => check(label, tool, input, want));
+  ].forEach(([label, tool, input, want]) => check(label, tool, input, want, REPO));
 }
 
 console.log(`RESULT: ${pass}/${total} passed${LIVE ? " (including live cases)" : " (deterministic; add --live for identity/PR cases)"}`);

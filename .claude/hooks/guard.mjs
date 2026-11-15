@@ -70,7 +70,9 @@ function embeddedEnvRef(code) {
 // Distinguishes commands that READ/WRITE/LOAD a real env file from harmless text that merely contains
 // ".env" (search patterns, echo text, commit messages, metadata-only commands such as git check-ignore).
 const SEARCH_CMDS = new Set(["grep", "egrep", "fgrep", "rg", "ag", "findstr", "select-string", "sls", "sed", "awk"]);
-const TEXT_CMDS = new Set(["echo", "printf", "write-output", "write-host", "write-verbose", ":"]);
+// Arguments are text or filter expressions, never files to open (PowerShell filter cmdlets included).
+const TEXT_CMDS = new Set(["echo", "printf", "write-output", "write-host", "write-verbose", ":",
+  "where-object", "where", "?", "select-object", "select", "sort-object", "measure-object", "format-table", "ft", "format-list", "fl"]);
 const META_CMDS = new Set(["ls", "dir", "gci", "get-childitem", "test-path", "test", "[", "stat", "find"]);
 const META_GIT = new Set(["check-ignore", "ls-files", "status"]); // names/state only (commit is handled separately)
 const INLINE_CODE = { node: ["-e", "-p", "--eval", "--print"], deno: ["eval"], bun: ["-e", "--eval"], python: ["-c"], python3: ["-c"], py: ["-c"], ruby: ["-e"], perl: ["-e", "-E"], php: ["-r"] };
@@ -140,7 +142,7 @@ function searchArgsEnv(cmd, args) {
 
 // Returns the offending token if this segment accesses a real env file, else null.
 function envAccessInSegment(tokens) {
-  const { rest, targets } = splitRedirects(tokens);
+  const { rest, targets } = splitRedirects(unwrap(tokens));
   const redirect = targets.find(envTarget);
   if (redirect) return redirect;
   if (!rest.length) return null;
@@ -211,10 +213,14 @@ function splitShell(cmd) {
   const statements = []; let stages = []; let cur = ""; let quote = null;
   const endStatement = () => { stages.push(cur); statements.push(stages); stages = []; cur = ""; };
   for (let i = 0; i < cmd.length; i++) {
-    const c = cmd[i]; const n = cmd[i + 1];
-    if (quote) { cur += c; if (c === quote) quote = null; continue; }
+    const c = cmd[i]; const n = cmd[i + 1]; const prev = cmd[i - 1];
+    if (quote === "'") { cur += c; if (c === "'") quote = null; continue; }
+    if (c === "\\" && n !== undefined) { cur += c + n; i++; continue; } // escape (unquoted or in "...")
+    if (quote === '"') { cur += c; if (c === '"') quote = null; continue; }
     if (c === "'" || c === '"') { quote = c; cur += c; continue; }
     if ((c === "&" && n === "&") || (c === "|" && n === "|")) { endStatement(); i++; continue; }
+    if (c === "|" && n === "&") { stages.push(cur); cur = ""; i++; continue; } // |& pipes stdout+stderr
+    if (c === "&" && n !== ">" && prev !== ">" && prev !== "<") { endStatement(); continue; } // background `&`
     if (c === ";" || c === "\n") { endStatement(); continue; }
     if (c === "|") { stages.push(cur); cur = ""; continue; }
     cur += c;
@@ -223,16 +229,19 @@ function splitShell(cmd) {
   return statements;
 }
 
-// Pipeline stages that READ file names from stdin / pipeline input and then open those files.
-const PIPE_CONSUMERS = new Set(["xargs", "while", "read", "foreach-object", "%", "foreach", "get-content", "gc", "cat", "type",
-  "copy-item", "cp", "mv", "move-item", "select-string", "sls", "source", ".", ...Object.keys(SHELLS), ...Object.keys(INLINE_CODE)]);
+// After a stage that names an env file, only these text FILTERS may follow (they never open the names they
+// receive). Anything else — xargs, while/read, Get-Content, cp, tar -T -, parallel, Import-Csv, unknown
+// programs — could open the named file, so it is denied (allowlist, conservative by default).
+const SAFE_FILTERS = new Set(["grep", "egrep", "fgrep", "rg", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "nl", "less", "more",
+  "tee", "select-object", "select", "where-object", "where", "?", "measure-object", "measure", "sort-object", "sort",
+  "out-null", "out-string", "out-host", "format-table", "ft", "format-list", "fl", "findstr"]);
 const namesEnv = (tokens) => tokens.find(envTarget) ?? null;
 
 // Analyze a whole command string (segments + command substitutions + interpreter heredocs) for env-file access.
 function envAccessInCommand(command) {
   // Heredoc bodies received by a code interpreter (node <<EOF ... EOF) are code: scan them for env-file references.
   for (const m of String(command).matchAll(/^([^\n]*?)<<-?\s*(['"]?)(\w+)\2([^\n]*)\n([\s\S]*?)\n[ \t]*\3[ \t]*(?=\n|$)/gm)) {
-    if (heredocReceivers(m[1], m[4]).some((r) => CODE_RUNNERS.has(r))) { const ref = embeddedEnvRef(m[5]); if (ref) return ref; }
+    if (!heredocIsData(m[1], m[4]) && heredocFeedsCode(m[1], m[4])) { const ref = embeddedEnvRef(m[5]); if (ref) return ref; }
   }
   // Command substitutions run only in live shell text: the command with data heredocs removed, plus the
   // bodies of UNQUOTED heredocs (<<EOF expands $(...) and `...`; <<'EOF' / <<"EOF" bodies are inert data,
@@ -248,7 +257,7 @@ function envAccessInCommand(command) {
       // A stage that only lists/prints/matches env file names is harmless on its own, but not when a later
       // stage consumes those names as files (`find . -name .env | xargs cat`, `gci .env | Get-Content`).
       const named = i < stages.length - 1 ? namesEnv(stages[i]) : null;
-      if (named && stages.slice(i + 1).some((s) => s.length && PIPE_CONSUMERS.has(prog(s[0])))) return named;
+      if (named && stages.slice(i + 1).some((s) => { const u = unwrap(s); return u.length && !SAFE_FILTERS.has(prog(u[0])); })) return named;
     }
   }
   return null;
@@ -387,18 +396,47 @@ const prog = (tok) => path.basename(String(tok).replace(/\\/g, "/")).replace(/\.
 
 // Heredoc bodies are data (e.g. commit messages), not commands: drop them before analysis,
 // unless the heredoc feeds a shell/interpreter, in which case its body is analyzed as commands.
+// Strip command wrappers and env assignments so the real program is first:
+// `timeout 600 bash`, `sudo -u x bash`, `env CI=1 bash`, `nohup bash`, `nice -n 5 bash`, `FOO=1 bash` → `bash ...`.
+function unwrap(tokens) {
+  const t = [...tokens];
+  for (let guard = 0; guard < 10 && t.length; guard++) {
+    const p = prog(t[0]);
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t[0])) { t.shift(); continue; }
+    if (["nohup", "time", "command", "exec", "builtin"].includes(p)) { t.shift(); continue; }
+    if (p === "sudo") { t.shift(); while (t[0]?.startsWith("-")) { const o = t.shift(); if (/^-[ugCDhpRrTt]$/.test(o)) t.shift(); } continue; }
+    if (p === "env") { t.shift(); while (t[0] && (t[0].startsWith("-") || /^[A-Za-z_]\w*=/.test(t[0]))) { const o = t.shift(); if (o === "-u" || o === "-C" || o === "-S") t.shift(); } continue; }
+    if (p === "timeout") { t.shift(); while (t[0]?.startsWith("-")) { const o = t.shift(); if (o === "-s" || o === "-k" || o === "--signal" || o === "--kill-after") t.shift(); } t.shift(); continue; }
+    if (p === "nice") { t.shift(); if (t[0] === "-n") { t.shift(); t.shift(); } else if (/^-\d+$/.test(t[0] ?? "")) t.shift(); continue; }
+    if (p === "stdbuf") { t.shift(); while (t[0]?.startsWith("-")) t.shift(); continue; }
+    break;
+  }
+  return t;
+}
+
 // Which commands RECEIVE a heredoc: the last pipeline stage before `<<` (not earlier chained commands such as
 // `node x && git commit -F - <<EOF`), plus any stages it pipes into on the same line (`cat <<EOF | bash`).
-const CODE_RUNNERS = new Set(["node", "python", "python3", "py", "ruby", "perl", "php", "deno", "bun"]);
-const SHELL_RUNNERS = new Set(["bash", "sh", "zsh", "dash", "ksh", "pwsh", "powershell", "cmd", "xargs", "eval", "source", ".", ...CODE_RUNNERS]);
-function heredocReceivers(pre, post) {
+// A body is inert DATA only if every receiver is a known data sink; any other receiver (shells, interpreters,
+// wrappers, unknown programs) gets its body analyzed as commands — conservative by default.
+const CODE_RUNNERS = new Set(["node", "python", "python3", "py", "ruby", "perl", "php", "deno", "bun", "npx", "tsx"]);
+const DATA_SINKS = { git: ["commit", "tag", "notes", "hash-object", "apply", "am"], gh: null, cat: null, tee: null, "set-content": null, "out-file": null };
+function heredocReceiverTokens(pre, post) {
   const lastStatement = splitShell(pre).pop() ?? [""];
   const piped = (splitShell(post)[0] ?? []).slice(1); // `<<EOF | bash` → [" bash"]
-  return [lastStatement[lastStatement.length - 1], ...piped].map((s) => tokenize(String(s).trim())[0]).filter(Boolean).map(prog);
+  return [lastStatement[lastStatement.length - 1], ...piped].map((s) => unwrap(tokenize(String(s).trim())));
 }
+function heredocIsData(pre, post) {
+  return heredocReceiverTokens(pre, post).every((toks) => {
+    if (!toks.length) return false;
+    const p = prog(toks[0]);
+    if (!(p in DATA_SINKS)) return false;
+    return DATA_SINKS[p] === null || DATA_SINKS[p].includes(toks.slice(1).find((x) => !x.startsWith("-")));
+  });
+}
+const heredocFeedsCode = (pre, post) => heredocReceiverTokens(pre, post).some((toks) => toks.length && CODE_RUNNERS.has(prog(toks[0])));
 const stripHeredocs = (cmd) => cmd.replace(
   /^([^\n]*?)<<-?\s*(['"]?)(\w+)\2([^\n]*)\n[\s\S]*?\n[ \t]*\3[ \t]*(?=\n|$)/gm,
-  (m, pre, _q, _tag, post) => (heredocReceivers(pre, post).some((r) => SHELL_RUNNERS.has(r)) ? m : `${pre}<<HEREDOC${post}`),
+  (m, pre, _q, _tag, post) => (heredocIsData(pre, post) ? `${pre}<<HEREDOC${post}` : m),
 );
 
 function checkShell(command, cwd) {

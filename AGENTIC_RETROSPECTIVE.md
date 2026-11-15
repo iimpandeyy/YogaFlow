@@ -55,14 +55,27 @@ The Lead (main session) ran the `yogaflow-issue` skill. It delegated the build t
 - search patterns, `sed`/`awk` scripts, `echo` text, commit messages and metadata-only commands (`git check-ignore`, `ls-files`, `find` without `-exec`, `test -f`) → **allowed**;
 - file arguments, redirect targets, env globs, `--include`/`--glob` filters, `--env-file=` values, `rev:path`, `$(…)` substitutions, `bash -c`/`pwsh -Command` wrappers and inline `node -e`/heredoc code → **denied**.
 
-**Regression suite (committed):** `node .claude/hooks/guard.test.mjs` runs 144 deterministic cases, 154 with `--live`. Run against the previous guard, it shows **12 false positives fixed** (including both blocked commands) and **17 previously missed real accesses now denied**, such as `cat .env*`, `node -e "…readFileSync('.env')"`, `git show HEAD:.env` and `Get-Content -Path:.env`.
+**Regression suite (committed):** `node .claude/hooks/guard.test.mjs` runs 167 deterministic cases, 177 with `--live`. Every deterministic case runs in a throwaway git repo, so results don't depend on the checkout. Run against the previous guard, it shows **15 false positives fixed** (including both blocked commands) and **20 previously missed real accesses now denied**, such as `cat .env*`, `node -e "…readFileSync('.env')"`, `git show HEAD:.env` and `Get-Content -Path:.env`.
 
 **Independent review caught regressions in my first fix.** On PR #29, `architecture-security-reviewer` returned CHANGES REQUESTED and `qa-reviewer` returned FAIL. My suite passed, but in two places the first version allowed real reads that the old guard blocked:
 
 - a listing or text stage piped into a reader (`find . -name .env | xargs cat`, `Get-ChildItem .env | Get-Content`);
 - a pattern supplied by an option, so the file argument was read as the pattern (`grep -f pats.txt .env`, `sed -f`, `awk -f`).
 
-`git log -p .env` had also regressed. All of these are fixed: pipelines are now analyzed stage by stage, with quote-aware splitting, and pattern options are classified correctly. Each reported command is now a regression case. That was the gate working as intended: the implementer's own tests weren't treated as evidence.
+`git log -p .env` had also regressed. All of these are fixed: pipelines are now analyzed stage by stage, with quote-aware splitting, and pattern options are classified correctly. Each reported command is now a regression case.
+
+**Round 2 found two more problems:**
+
+- **Security:** my receiver fix hid heredoc bodies behind wrappers such as `timeout 600 bash <<EOF … git push origin main`, which also weakened the branch-protection rules.
+- **QA:** a test that passed in my repo failed in a fresh clone.
+
+The fixes inverted the design to fail safe:
+
+- a heredoc body is treated as data only when its receiver is a known data sink (`git commit -F -`, `gh … --body-file -`, `cat > file`), after unwrapping `timeout`/`sudo`/`env`/`nohup`;
+- after a stage that names an env file, only known-safe filters may follow;
+- every deterministic test now runs in a throwaway git repo.
+
+That was the gate working as intended: the implementer's own tests weren't treated as evidence. Denylists of "dangerous" commands kept leaking, so the fixes switched to allowlists of known-safe ones.
 
 **Dogfooding caught two more cases:**
 
