@@ -46,9 +46,15 @@ Git and PR behavior:
 
 ## Workflow improvement (PR #29) and what reviewing it taught
 
-**Final fix (narrow, owner-approved):** the old guard logic is kept unchanged, with one addition. Before the checks run, the **pattern argument** of `grep`/`rg`/`git grep`/`Select-String` is masked as text. It's masked only when the pattern is unambiguous (not when it comes from `-f`, `-eKEY` or `sed`/`awk`) and when nothing after it in the pipeline can open files. Every other token is checked as before.
+**Final fix (narrow, owner-approved):** the old guard logic is kept unchanged, with one addition. Before the checks run, the **pattern argument** of `grep`/`rg`/`git grep`/`Select-String` is masked as text. It's masked only under three conditions. Otherwise nothing is masked, and every token is checked by the old logic.
 
-Against the old guard, the committed suite (`node .claude/hooks/guard.test.mjs`) shows that the only change is **13 search-pattern commands now allowed**, including both #7 commands. All real-access cases behave identically. The suite runs 148 deterministic cases (158 with `--live`), each in a throwaway git repo.
+- Every option is on a known allowlist for that command. Unknown options such as `--iglob`, `-f`, `-eKEY` or `-LP` fail closed, and `sed`/`awk` are never masked.
+- The pattern contains nothing the shell would still run, such as `$(…)` or backticks.
+- Nothing after it in the pipeline can open files.
+
+Against the old guard, the committed suite (`node .claude/hooks/guard.test.mjs`) shows that the only change is **13 search-pattern commands now allowed**, including both #7 commands. Every real-access case in the suite, and in the reviewers' roughly 300-command comparison harnesses, matches the old guard, apart from relaxations the reviewer classed as harmless. The suite runs 159 deterministic cases (169 with `--live`), each in a throwaway git repo.
+
+Even the narrowed version needed one more round. Security review found that masking hid a `$(…)` that the shell still ran, and QA found that unlisted value-taking options were misread as the pattern. Both were fixed by failing closed.
 
 **How it got there:** my first version tried to make the guard "role-aware" everywhere, covering heredocs, pipelines and metadata commands, and to close extra gaps along the way. It passed my own tests, but independent review failed it **three rounds in a row**:
 
@@ -69,7 +75,7 @@ The guard also blocked its own PR and commits twice. The owner chose to narrow t
 
 **Follow-ups (not done):**
 
-- The 20 pre-existing guard gaps and 3 false positives, listed as "known limitations" in the suite. Examples: `cat .env*`, `bash -c 'cat .env'`, `node -e` reads, `git show HEAD:.env`.
+- The 21 pre-existing guard gaps and 3 false positives, listed as "known limitations" in the suite. Examples: `cat .env*`, `bash -c 'cat .env'`, `node -e` reads, `git show HEAD:.env`.
 - The hook matcher doesn't cover the Grep/Glob tools.
 - Whether to make CI a required check on `dev`.
 - Whether to upgrade the GitHub Actions or pin them to commit SHAs (they log a Node 20 deprecation warning).

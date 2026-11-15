@@ -187,34 +187,43 @@ const stripHeredocs = (cmd) => cmd.replace(
 // token (files to search, -Path values, other commands) is checked exactly as before. Conservative by design:
 // if the pattern could come from anywhere else (-f/--file pattern files, attached -eKEY / --regexp=, unknown
 // layouts), nothing is masked. sed/awk are not masked because their scripts can open files.
-const SEARCH_VALUE_OPTS = new Set(["-A", "-B", "-C", "-m", "-d", "-D", "-t", "-T", "-M", "-j", "--type", "--type-not",
-  "--max-count", "--context", "--after-context", "--before-context", "--max-depth", "--exclude", "--exclude-dir", "--include", "--glob", "-g"]);
-const PS_SEARCH_VALUE_OPTS = new Set(["-path", "-literalpath", "-encoding", "-exclude", "-include", "-context"]);
+// Fail-closed option allowlists per search family. Masking happens only when EVERY option is known; an unknown
+// option (it might take a value, or open a file: --iglob, --type-add, --ignore-file, --exclude-from, --pre, -LP...)
+// means no masking, i.e. the unchanged old checks apply.
+const S = (s) => new Set(s.split(" "));
+const SEARCH_FAMILIES = {
+  grep: { short: "inrRlLcvwxoqshHEFGPaIzZbUT", long: S("--ignore-case --line-number --recursive --dereference-recursive --files-with-matches --files-without-match --count --invert-match --word-regexp --line-regexp --only-matching --quiet --silent --no-filename --with-filename --extended-regexp --fixed-strings --basic-regexp --perl-regexp --text --null --null-data --byte-offset --no-messages --color --colour"), value: S("-A -B -C -m") },
+  rg: { short: "inlcvwxoqsSFuLHNzUPa", long: S("--ignore-case --smart-case --case-sensitive --fixed-strings --line-number --no-line-number --no-heading --heading --count --count-matches --files-with-matches --files-without-match --invert-match --word-regexp --line-regexp --only-matching --quiet --hidden --no-ignore --follow --json --vimgrep --multiline --pcre2 --no-messages --text --color --colour"), value: S("-A -B -C -m -t -T -M -j -r --type --type-not --max-count --context --after-context --before-context --max-depth --max-columns --replace") },
+  "git-grep": { short: "nilcvwEFPhHIoqz", long: S("--cached --untracked --no-index --line-number --ignore-case --files-with-matches --count --invert-match --word-regexp --extended-regexp --fixed-strings --perl-regexp --only-matching --quiet --heading --break --color --colour"), value: S("-A -B -C -m --max-depth --max-count --context") },
+  ps: { long: S("-simplematch -casesensitive -notmatch -allmatches -list -quiet -raw -noemphasis"), value: S("-path -literalpath -context -encoding -include -exclude") },
+};
+SEARCH_FAMILIES.egrep = SEARCH_FAMILIES.grep; SEARCH_FAMILIES.fgrep = SEARCH_FAMILIES.grep;
 
 // Index of the pattern token in a search-command stage, or -1 when it cannot be identified safely.
 function searchPatternIndex(tokens) {
   const p = prog(tokens[0] ?? "");
-  let i = 1;
-  if (p === "git" && tokens[1] === "grep") i = 2;
-  else if (!["grep", "egrep", "fgrep", "rg", "select-string", "sls"].includes(p)) return -1;
-  const ps = p === "select-string" || p === "sls";
-  if (!ps) {
-    for (let j = i; j < tokens.length && tokens[j] !== "--"; j++) {
-      const a = tokens[j];
-      if (a === "-f" || a === "--file" || /^--(file|regexp)=/.test(a)) return -1; // pattern comes from a file / inline
-      if (!a.startsWith("--") && /^-[A-Za-z]*f/.test(a)) return -1;              // -f combined/attached (-rf, -fFILE)
-      if (!a.startsWith("--") && /^-[A-Za-z]*e./.test(a)) return -1;             // attached -eKEY
-    }
-  }
+  let i = 1; let fam;
+  if (p === "git" && tokens[1] === "grep") { i = 2; fam = "git-grep"; }
+  else if (p === "select-string" || p === "sls") fam = "ps";
+  else if (["grep", "egrep", "fgrep", "rg"].includes(p)) fam = p;
+  else return -1;
+  const F = SEARCH_FAMILIES[fam]; const ps = fam === "ps";
+  let pattern = -1;
   for (let j = i; j < tokens.length; j++) {
     const a = tokens[j];
-    if (a === "--") return j + 1 < tokens.length ? j + 1 : -1;
-    if (ps ? a.toLowerCase() === "-pattern" : a === "-e" || a === "--regexp" || /^-[A-Za-z]+e$/.test(a)) return j + 1 < tokens.length ? j + 1 : -1;
-    if (a.startsWith("-")) { if ((ps ? PS_SEARCH_VALUE_OPTS : SEARCH_VALUE_OPTS).has(ps ? a.toLowerCase() : a)) j++; continue; }
-    return j; // first positional = pattern
+    if (!ps && a === "--") { if (pattern === -1 && j + 1 < tokens.length) pattern = j + 1; break; }
+    if (!a.startsWith("-")) { if (pattern === -1) pattern = j; continue; } // first positional = pattern
+    const name = ps ? a.toLowerCase() : a;
+    if (ps ? name === "-pattern" : name === "-e" || name === "--regexp") { if (pattern !== -1 || j + 1 >= tokens.length) return -1; pattern = j + 1; j++; continue; }
+    if (F.value.has(name)) { j++; continue; }
+    if (F.long.has(name) || (!ps && /^--(color|colour)=\w+$/.test(name))) continue;
+    if (!ps && /^-[A-Za-z]+$/.test(name) && [...name.slice(1)].every((c) => F.short.includes(c))) continue; // combined known flags
+    return -1; // unknown option (incl. -f, -eKEY, --file=, --regexp=, -LP ...): fail closed, no masking
   }
-  return -1;
+  return pattern;
 }
+// Never mask a token the shell would still EXPAND or EXECUTE: $(...), `...`, $VAR, <(...), >(...).
+const executesInside = (raw) => /[$`]|[<>]\(/.test(raw);
 
 // Stages that may follow a masked search stage: text filters that never open the names they receive.
 // If anything else follows (xargs, Get-Content, cat, a shell, ...), the matched names could be opened, so the
@@ -240,7 +249,7 @@ function maskSearchPatterns(cmd) {
     stages.forEach(([s, e], k) => {
       const toks = tokensOf([s, e]);
       const idx = searchPatternIndex(toks.map(unquote));
-      if (idx === -1) return;
+      if (idx === -1 || executesInside(toks[idx][0])) return;
       const laterSafe = stages.slice(k + 1).every((span) => {
         const first = tokensOf(span)[0];
         return !first || SAFE_FILTERS.has(prog(unquote(first)));
