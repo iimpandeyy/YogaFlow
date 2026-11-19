@@ -1,4 +1,12 @@
-/** Public entry point of the data-access layer. Screens import from `@/lib/content` only. */
+/**
+ * Public entry point of the data-access layer. Screens import from `@/lib/content` only.
+ *
+ * - Choose user-facing copy from `reason` / `error.kind` only; never render `error.message`.
+ *   Only `kind` crosses the server → client boundary.
+ * - Routes that call these functions must render dynamically (`await connection()` or
+ *   `export const dynamic = "force-dynamic"`; ARCHITECTURE §10 item 1, owner decision), or the
+ *   build would bake in a not-configured page.
+ */
 export {
   getPracticeBySlug,
   listPractices,

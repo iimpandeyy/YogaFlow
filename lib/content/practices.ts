@@ -7,9 +7,18 @@ import { isPracticeType, PRACTICE_COLUMNS, type Practice, type PracticeType } fr
  *
  * - The only path from screens to practice content. Screens never query Supabase directly.
  * - Reads from Supabase PostgreSQL with the public anonymous key (RLS: SELECT only). Intended for
- *   server-side use (Server Components / route handlers); pages that call it render dynamically.
+ *   server-side use (Server Components / route handlers).
  * - Never throws for expected failures: every call returns a typed result the UI can render
  *   (RC-09). There is no local fallback data at runtime.
+ *
+ * Rules for callers:
+ * - Screens choose their copy from `reason` / `error.kind` only. They never render
+ *   `error.message` (diagnostic detail for server logs). Only `kind` may cross the
+ *   server → client boundary; never pass the whole error object to a Client Component.
+ * - Every Supabase-backed route must opt in to dynamic rendering, with `await connection()`
+ *   (from "next/server") or `export const dynamic = "force-dynamic"`. Owner decision recorded for
+ *   ARCHITECTURE §10 item 1. Otherwise `next build` (which runs without Supabase variables) would
+ *   prerender and bake in a "not-configured" page.
  */
 
 export type ContentErrorKind =

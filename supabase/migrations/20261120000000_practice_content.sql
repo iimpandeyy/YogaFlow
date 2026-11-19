@@ -7,6 +7,33 @@
 -- Approved vocabularies are mirrored in lib/content/types.ts; they change only through a
 -- documented human decision (Plan §1.4).
 
+-- Helper functions for array CHECK constraints (PostgreSQL does not allow subqueries in CHECK).
+-- Pure and immutable; EXECUTE is revoked from the public API roles below.
+create or replace function public.practices_text_array_is_distinct(values_in text[])
+  returns boolean
+  language sql
+  immutable
+  set search_path = ''
+as $$
+  select count(*) = count(distinct value) from unnest(values_in) as value
+$$;
+
+create or replace function public.practices_text_array_has_no_blanks(values_in text[])
+  returns boolean
+  language sql
+  immutable
+  set search_path = ''
+as $$
+  select not exists (
+    select 1 from unnest(values_in) as value where length(btrim(value)) = 0
+  )
+$$;
+
+revoke execute on function public.practices_text_array_is_distinct(text[])
+  from public, anon, authenticated;
+revoke execute on function public.practices_text_array_has_no_blanks(text[])
+  from public, anon, authenticated;
+
 create table if not exists public.practices (
   -- Stable, unique, URL-safe practice ID. Favorites/Routine store this value in localStorage.
   slug text primary key
@@ -25,13 +52,21 @@ create table if not exists public.practices (
       check (
         body_focus <@ array['Full Body', 'Back', 'Hips', 'Legs', 'Shoulders', 'Core']::text[]
         and array_position(body_focus, null) is null
-      ),
+      )
+    constraint practices_body_focus_one_dimensional
+      check (array_ndims(body_focus) = 1 or cardinality(body_focus) = 0)
+    constraint practices_body_focus_unique
+      check (public.practices_text_array_is_distinct(body_focus)),
   summary text not null
     constraint practices_summary_not_blank check (length(btrim(summary)) > 0),
   -- Ordered steps.
   instructions text[] not null
     constraint practices_instructions_present
-      check (cardinality(instructions) > 0 and array_position(instructions, null) is null),
+      check (cardinality(instructions) > 0 and array_position(instructions, null) is null)
+    constraint practices_instructions_one_dimensional
+      check (array_ndims(instructions) = 1 or cardinality(instructions) = 0)
+    constraint practices_instructions_no_blank_steps
+      check (public.practices_text_array_has_no_blanks(instructions)),
   benefits text not null
     constraint practices_benefits_not_blank check (length(btrim(benefits)) > 0),
   -- Safety & Caution text; null only where no caution is relevant.

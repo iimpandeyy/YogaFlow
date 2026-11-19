@@ -164,6 +164,22 @@ describe("migration", () => {
     expect(sql).not.toMatch(/grant\s+(insert|update|delete|all|truncate)/);
   });
 
+  it("constrains the array columns: one-dimensional, no blank steps, no duplicate body focus", () => {
+    const sql = migrationSql.toLowerCase();
+    expect(sql).toContain("check (array_ndims(body_focus) = 1 or cardinality(body_focus) = 0)");
+    expect(sql).toContain("check (array_ndims(instructions) = 1 or cardinality(instructions) = 0)");
+    expect(sql).toContain("check (public.practices_text_array_is_distinct(body_focus))");
+    expect(sql).toContain("check (public.practices_text_array_has_no_blanks(instructions))");
+    // The helper functions are not callable through the public API.
+    for (const fn of ["practices_text_array_is_distinct", "practices_text_array_has_no_blanks"]) {
+      expect(sql).toMatch(
+        new RegExp(
+          `revoke execute on function public\\.${fn}\\(text\\[\\]\\)\\s+from public, anon, authenticated;`,
+        ),
+      );
+    }
+  });
+
   it("uses no Supabase Storage or Authentication objects", () => {
     expect(migrationSql.toLowerCase()).not.toMatch(/\b(storage|auth)\.[a-z_]+/);
   });

@@ -35,7 +35,7 @@ values
     ]::text[],
     'A steady standing pose that builds awareness of posture and balance.',
     array[
-      'Stand with your feet hip-width apart and your arms resting by your sides.',
+      'Stand with your feet hip-width apart.',
       'Spread your toes and press evenly through both feet.',
       'Lengthen through the top of your head and relax your shoulders away from your ears.',
       'Let your arms hang naturally with your palms facing forward or in toward your body.',
@@ -65,10 +65,10 @@ values
       'Sit your hips back toward your heels.',
       'Fold forward and rest your forehead on the mat, a cushion, or your stacked hands.',
       'Stretch your arms forward or rest them alongside your body.',
-      'Breathe slowly into your back for five to ten breaths, then walk your hands back to sit up.'
+      'Breathe slowly and notice your back gently rise and fall for five to ten breaths, then walk your hands back to sit up.'
     ]::text[],
     'Offers a quiet moment to rest and notice the breath. A gentle stretch for the back and hips.',
-    'Place a cushion under your hips or between your heels and hips if kneeling feels uncomfortable. Move slowly and stop if you feel pain in your knees, hips, or back.',
+    'If kneeling feels uncomfortable, place a cushion between your heels and hips or under your knees. Move slowly and stop if you feel pain in your knees, hips, or back.',
     '/images/practices/childs-pose.svg',
     'Placeholder illustration for Child''s Pose',
     'YogaFlow draft text (AI-written, not yet human-reviewed)',
@@ -196,7 +196,7 @@ values
       'Continue for one to three minutes at a relaxed, natural pace.'
     ]::text[],
     'Encourages slow, unhurried breathing and a moment of focused attention.',
-    'Keep the breath gentle and never force it. If you feel lightheaded or uncomfortable, return to your normal breathing. Stop if you feel unwell.',
+    'Keep the breath gentle and never force it. If you feel lightheaded or uncomfortable, return to your normal breathing. Stop if you feel pain or unwell.',
     '/images/practices/belly-breathing.svg',
     'Placeholder illustration for Belly Breathing',
     'YogaFlow draft text (AI-written, not yet human-reviewed)',
@@ -219,8 +219,8 @@ values
       'Pause for a count of four, then begin the next round.',
       'Repeat for four rounds, or for as long as it feels comfortable.'
     ]::text[],
-    'Gives the mind a simple, steady rhythm to follow and can help you feel more settled.',
-    'Shorten the counts or skip the holds if they feel uncomfortable. If you feel lightheaded or short of breath, return to your normal breathing. Stop if you feel unwell.',
+    'Gives the mind a simple, steady rhythm to follow.',
+    'Shorten the counts or skip the holds if they feel uncomfortable. If you feel lightheaded or short of breath, return to your normal breathing. Stop if you feel pain or unwell.',
     '/images/practices/box-breathing.svg',
     'Placeholder illustration for Box Breathing',
     'YogaFlow draft text (AI-written, not yet human-reviewed)',
@@ -242,8 +242,8 @@ values
       'Keep the breath smooth and quiet, without straining.',
       'Continue for one to three minutes.'
     ]::text[],
-    'Encourages an unhurried pace of breathing and can support a sense of calm.',
-    'Choose counts that feel easy for you. If you feel lightheaded or short of breath, return to your normal breathing. Stop if you feel unwell.',
+    'Encourages an unhurried pace of breathing.',
+    'Choose counts that feel easy for you. If you feel lightheaded or short of breath, return to your normal breathing. Stop if you feel pain or unwell.',
     '/images/practices/extended-exhale-breathing.svg',
     'Placeholder illustration for Extended Exhale Breathing',
     'YogaFlow draft text (AI-written, not yet human-reviewed)',
@@ -266,7 +266,7 @@ values
       'Continue for three to five minutes, then slowly open your eyes.'
     ]::text[],
     'Practices gently returning attention to the present moment.',
-    'Keep your eyes open if closing them feels uncomfortable. If the practice brings up distress, open your eyes, take a break, or stop.',
+    'Keep your eyes open if closing them feels uncomfortable. If the practice brings up distress, open your eyes or take a break. Stop if you feel pain or unwell.',
     '/images/practices/breath-awareness-meditation.svg',
     'Placeholder illustration for Breath Awareness Meditation',
     'YogaFlow draft text (AI-written, not yet human-reviewed)',
@@ -289,7 +289,7 @@ values
       'Finish with a few breaths, noticing your whole body at once, then slowly open your eyes.'
     ]::text[],
     'Builds the habit of noticing sensations in the body with curiosity and without judgment.',
-    'Change position whenever you need to. If focusing on any area brings up discomfort or distress, move your attention elsewhere, open your eyes, or stop.',
+    'Change position whenever you need to. If focusing on any area brings up discomfort or distress, move your attention elsewhere or open your eyes. Stop if you feel pain or unwell.',
     '/images/practices/body-scan-meditation.svg',
     'Placeholder illustration for Body Scan Meditation',
     'YogaFlow draft text (AI-written, not yet human-reviewed)',
@@ -312,7 +312,7 @@ values
       'Rest quietly for a few breaths before opening your eyes.'
     ]::text[],
     'Practices bringing a friendly, patient attitude to yourself and others.',
-    'There is no right way to feel during this practice. If it brings up difficult feelings, return to your breath, take a break, or stop.',
+    'There is no right way to feel during this practice. If it brings up difficult feelings, return to your breath or take a break. Stop if you feel pain or unwell.',
     '/images/practices/loving-kindness-meditation.svg',
     'Placeholder illustration for Loving-Kindness Meditation',
     'YogaFlow draft text (AI-written, not yet human-reviewed)',

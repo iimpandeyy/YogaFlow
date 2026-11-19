@@ -9,12 +9,12 @@
  *
  * Checks:
  *   1. Per-type practice counts match the seed (6 Yoga, 3 Breathwork, 3 Meditation).
- *   2. An anonymous INSERT is rejected (RLS / SELECT-only grants).
+ *   2. Anonymous INSERT, UPDATE, and DELETE are rejected (RLS / SELECT-only grants).
  */
 import { createClient } from "@supabase/supabase-js";
 
 const EXPECTED_COUNTS = { Yoga: 6, Breathwork: 3, Meditation: 3 };
-const PROBE_SLUG = "verify-anon-insert-probe";
+const PROBE_SLUG = "__verify_probe__";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? "";
@@ -32,6 +32,22 @@ function describeError(error) {
   if (!error) return "unknown error";
   const code = typeof error.code === "string" && error.code ? `${error.code}: ` : "";
   return redact(`${code}${error.message ?? error}`);
+}
+
+/** 42501 = insufficient_privilege: no write grant, or blocked by row-level security. */
+function isPrivilegeDenied(error) {
+  if (!error) return false;
+  return (
+    error.code === "42501" ||
+    /permission denied|row-level security/i.test(String(error.message ?? ""))
+  );
+}
+
+function printCleanup() {
+  console.log(
+    "   Remove the probe row in the SQL Editor, then re-run the migration and re-check RLS:",
+  );
+  console.log(`   delete from public.practices where slug = '${PROBE_SLUG}';`);
 }
 
 async function main() {
@@ -67,37 +83,66 @@ async function main() {
     }
   }
 
-  console.log("2. Anonymous write attempt (must be rejected)");
+  console.log("2. Anonymous write attempts (must be rejected by privileges / RLS)");
+
+  // INSERT: the probe row deliberately violates the slug-format and type CHECK constraints, so it
+  // can never persist while the migration's constraints exist, even if write privileges leaked.
   const { error: insertError } = await supabase.from("practices").insert({
     slug: PROBE_SLUG,
     title: "Verification probe",
-    type: "Yoga",
-    difficulty: "Beginner",
-    body_focus: ["Full Body"],
+    type: "VerifyProbe",
     summary: "Verification probe",
     instructions: ["Verification probe"],
     benefits: "Verification probe",
-    caution: null,
-    image_path: "/images/practices/mountain-pose.svg",
+    image_path: "/images/practices/verify-probe.svg",
     image_alt: "Verification probe",
     is_placeholder: true,
   });
-  // 42501 = insufficient_privilege (no INSERT grant, or blocked by row-level security).
-  const deniedByDatabase =
-    insertError &&
-    (insertError.code === "42501" ||
-      /permission denied|row-level security/i.test(String(insertError.message ?? "")));
-  if (deniedByDatabase) {
+  if (isPrivilegeDenied(insertError)) {
     console.log(`   PASS insert rejected (${describeError(insertError)})`);
+  } else if (insertError?.code === "23514") {
+    console.log(
+      `   FAIL insert: writes are NOT blocked; only a constraint stopped the row (${describeError(insertError)})`,
+    );
+    failed = true;
   } else if (insertError) {
     console.log(
-      `   FAIL inconclusive: the request failed for another reason (${describeError(insertError)})`,
+      `   FAIL insert inconclusive: the request failed for another reason (${describeError(insertError)})`,
     );
     failed = true;
   } else {
     console.log("   FAIL insert was ACCEPTED. Public writes are not blocked.");
-    console.log(`   Delete the row with slug '${PROBE_SLUG}' in the SQL Editor and re-check RLS.`);
+    printCleanup();
     failed = true;
+  }
+
+  // UPDATE and DELETE: target only the probe slug, which never exists in real content.
+  const probes = [
+    [
+      "update",
+      () =>
+        supabase
+          .from("practices")
+          .update({ title: "Verification probe" })
+          .eq("slug", PROBE_SLUG)
+          .select("slug"),
+    ],
+    ["delete", () => supabase.from("practices").delete().eq("slug", PROBE_SLUG).select("slug")],
+  ];
+  for (const [label, run] of probes) {
+    const { error } = await run();
+    if (isPrivilegeDenied(error)) {
+      console.log(`   PASS ${label} rejected (${describeError(error)})`);
+    } else if (error) {
+      console.log(
+        `   FAIL ${label} inconclusive: the request failed for another reason (${describeError(error)})`,
+      );
+      failed = true;
+    } else {
+      // Success, even with zero rows affected, means the anon role holds the privilege.
+      console.log(`   FAIL ${label}: the write privilege exists (request was not rejected)`);
+      failed = true;
+    }
   }
 
   console.log(failed ? "\nResult: FAIL" : "\nResult: PASS");
