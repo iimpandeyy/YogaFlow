@@ -34,13 +34,17 @@ function describeError(error) {
   return redact(`${code}${error.message ?? error}`);
 }
 
-/** 42501 = insufficient_privilege: no write grant, or blocked by row-level security. */
+/**
+ * 42501 = insufficient_privilege: no write grant on the table, or blocked by row-level security.
+ * A "permission denied for function …" error is NOT proof: it comes from the CHECK-constraint
+ * helper functions (EXECUTE revoked from anon), which only run after the table grant and RLS
+ * already allowed the write. Treat it as a failure.
+ */
 function isPrivilegeDenied(error) {
   if (!error) return false;
-  return (
-    error.code === "42501" ||
-    /permission denied|row-level security/i.test(String(error.message ?? ""))
-  );
+  const message = String(error.message ?? "");
+  if (/permission denied for function/i.test(message)) return false;
+  return error.code === "42501" || /permission denied|row-level security/i.test(message);
 }
 
 function printCleanup() {
