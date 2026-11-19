@@ -13,7 +13,9 @@
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "seed:generate": "node scripts/generate-seed.ts",
+    "verify:supabase": "node --env-file-if-exists=.env.local scripts/verify-supabase.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.119.0",
