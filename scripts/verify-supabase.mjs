@@ -104,6 +104,11 @@ async function main() {
   });
   if (isPrivilegeDenied(insertError)) {
     console.log(`   PASS insert rejected (${describeError(insertError)})`);
+  } else if (/permission denied for function/i.test(String(insertError?.message ?? ""))) {
+    console.log(
+      `   FAIL insert: writes are NOT blocked; the table grant and RLS both allowed the write and only a helper-function privilege stopped it (${describeError(insertError)})`,
+    );
+    failed = true;
   } else if (insertError?.code === "23514") {
     console.log(
       `   FAIL insert: writes are NOT blocked; only a constraint stopped the row (${describeError(insertError)})`,

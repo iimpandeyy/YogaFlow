@@ -103,6 +103,8 @@ How to read a FAIL:
 - **"writes are NOT blocked; only a constraint stopped the row"** (code `23514`): the anon role can
   insert. Only the CHECK constraints stopped the probe. Re-run the migration (it sets up RLS and the
   SELECT-only grants) and verify again.
+- **"only a helper-function privilege stopped it"**: the anon role can insert and RLS let the write
+  through. Re-run the migration and verify again.
 - **"insert was ACCEPTED"**, or **"the write privilege exists"** for update/delete: public writes are
   not blocked. Re-run the migration and verify again.
 - **"inconclusive"**: the request failed for another reason (for example, network or a wrong URL).
