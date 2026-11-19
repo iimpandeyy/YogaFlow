@@ -75,10 +75,10 @@ export function SiteHeader() {
                     href={item.href}
                     aria-current={active ? "page" : undefined}
                     onClick={() => setMenuOpen(false)}
-                    className={`block rounded-md px-3 py-2 text-base text-slate-800 hover:bg-slate-100 hover:text-slate-950 md:text-sm ${focusRing} ${
+                    className={`block rounded-md px-3 py-2 text-base hover:bg-slate-100 hover:text-slate-950 md:text-sm ${focusRing} ${
                       active
                         ? "font-semibold text-slate-950 underline decoration-2 underline-offset-8"
-                        : "font-normal"
+                        : "font-normal text-slate-800"
                     }`}
                   >
                     {item.label}

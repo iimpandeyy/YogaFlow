@@ -15,9 +15,9 @@ export default function ErrorBoundary({ error, retry }: ErrorProps) {
   }, [error]);
 
   return (
-    <div role="alert" className="mx-auto max-w-5xl px-4 py-10 sm:px-6 sm:py-14">
+    <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 sm:py-14">
       <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Something went wrong</h1>
-      <p className="mt-4 text-base text-slate-700 sm:text-lg">
+      <p role="alert" className="mt-4 text-base text-slate-700 sm:text-lg">
         This page could not be loaded. Please try again.
       </p>
       <div className="mt-6 flex flex-wrap gap-3">
