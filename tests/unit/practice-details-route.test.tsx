@@ -10,6 +10,7 @@ import YogaNotFound from "@/app/yoga/[slug]/not-found";
 import { SAFETY_STOP_NOTICE, WELLNESS_DISCLAIMER } from "@/components/layout/wellness-copy";
 import { getPracticeBySlug, type Practice, type PracticeResult } from "@/lib/content";
 import { mapPracticeRow } from "@/lib/content/mapping";
+import { SavedPracticesProvider } from "@/lib/saved";
 import type { PracticeRow } from "@/lib/content/types";
 import { breathworkRow, yogaRow } from "../fixtures/practice-rows";
 
@@ -62,7 +63,8 @@ function props(slug: string) {
 
 /** Renders an async Server Component page by awaiting it, then rendering its result. */
 async function renderPage(route: RouteModule, slug: string) {
-  return render(await route.default(props(slug)));
+  // Details pages include the Favorites toggle (#16), which needs the saved-practices provider.
+  return render(await route.default(props(slug)), { wrapper: SavedPracticesProvider });
 }
 
 function resolveWith(result: PracticeResult) {
@@ -100,8 +102,13 @@ describe("Practice Details routes", () => {
     expect(order.indexOf("safety-caution")).toBeLessThan(order.indexOf("instructions"));
 
     expect(screen.getByRole("link", { name: /Back to Yoga/ })).toHaveAttribute("href", "/yoga");
-    // The actions slot is owned by later Issues (#16, #17).
-    expect(container.querySelector('[data-slot="practice-actions"]')).toBeNull();
+    // The actions slot holds the Favorites toggle (#16); the safety notice slot is filled (#14).
+    const actions = container.querySelector('[data-slot="practice-actions"]') as HTMLElement;
+    expect(actions).not.toBeNull();
+    expect(within(actions).getByRole("button", { name: "Save to Favorites" })).toBeInTheDocument();
+    expect(container.querySelector('[data-slot="safety-notice"]')).toHaveTextContent(
+      SAFETY_STOP_NOTICE,
+    );
   });
 
   it("shows the approved stop-on-pain line under the heading, before the practice's caution (#14)", async () => {

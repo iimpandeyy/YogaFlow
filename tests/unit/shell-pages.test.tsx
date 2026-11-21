@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import ErrorBoundary from "@/app/error";
 import NotFound from "@/app/not-found";
 import BreathworkPage from "@/app/breathwork/page";
-import FavoritesPage from "@/app/favorites/page";
 import MeditationPage from "@/app/meditation/page";
 import RoutinePage from "@/app/routine/page";
 import { SiteFooter } from "@/components/layout/site-footer";
@@ -37,7 +36,6 @@ describe("section placeholder pages", () => {
   it.each([
     ["Breathwork", BreathworkPage],
     ["Meditation", MeditationPage],
-    ["Favorites", FavoritesPage],
     ["Routine", RoutinePage],
   ] as const)("%s renders its heading and a coming-soon note", (label, Page) => {
     render(<Page />);
