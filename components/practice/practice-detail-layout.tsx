@@ -1,7 +1,32 @@
 import type { ReactNode } from "react";
+import { WELLNESS_DISCLAIMER } from "@/components/layout/wellness-copy";
 import type { Practice } from "@/lib/content";
 import { PracticeImage } from "./practice-image";
 import { DifficultyLabel, PlaceholderLabel, TypeLabel } from "./practice-labels";
+
+/**
+ * Decorative "info" mark beside the Safety & Caution heading. The heading text carries the
+ * meaning, so the section never relies on color or the icon alone (POLICY §3; WCAG 1.4.1).
+ */
+function SafetyIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      focusable="false"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-6 w-6 shrink-0 text-amber-800"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="11" x2="12" y2="16" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
+    </svg>
+  );
+}
 
 type PracticeDetailLayoutProps = {
   practice: Practice;
@@ -11,8 +36,9 @@ type PracticeDetailLayoutProps = {
    */
   actions?: ReactNode;
   /**
-   * Slot inside the Safety & Caution section for the detail-page safety reinforcement owned by
-   * #14 (prominence, disclaimer). Nothing is built behind it here.
+   * Line rendered directly under the Safety & Caution heading, before the practice's own caution
+   * (#14). The detail routes always pass the owner-approved stop-on-pain line, so the section
+   * always renders there, even when `caution` is null.
    */
   safetyNotice?: ReactNode;
 };
@@ -73,18 +99,31 @@ export function PracticeDetailLayout({
       </header>
 
       {hasCautionSection ? (
-        <section data-section="safety-caution" aria-labelledby="practice-caution" className="mt-10">
-          <h2 id="practice-caution" className="text-xl font-semibold">
+        <section
+          data-section="safety-caution"
+          aria-labelledby="practice-caution"
+          className="mt-10 rounded-lg border-2 border-l-8 border-amber-700 bg-amber-50 p-4 text-slate-900 sm:p-6"
+        >
+          <h2 id="practice-caution" className="flex items-center gap-2 text-xl font-semibold">
+            <SafetyIcon />
             Safety &amp; Caution
           </h2>
           {safetyNotice !== undefined ? (
-            <div data-slot="safety-notice" className="mt-3">
+            <div data-slot="safety-notice" className="mt-3 font-medium break-words">
               {safetyNotice}
             </div>
           ) : null}
           {practice.caution !== null ? (
-            <p className="mt-3 break-words text-slate-800">{practice.caution}</p>
+            <p data-slot="practice-caution" className="mt-3 break-words text-slate-800">
+              {practice.caution}
+            </p>
           ) : null}
+          <p
+            data-slot="detail-wellness-disclaimer"
+            className="mt-4 text-sm break-words text-slate-800"
+          >
+            {WELLNESS_DISCLAIMER}
+          </p>
         </section>
       ) : null}
 
