@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as BreathworkRoute from "@/app/breathwork/[slug]/page";
 import BreathworkLoading from "@/app/breathwork/[slug]/loading";
@@ -7,6 +7,7 @@ import * as MeditationRoute from "@/app/meditation/[slug]/page";
 import MeditationNotFound from "@/app/meditation/[slug]/not-found";
 import * as YogaRoute from "@/app/yoga/[slug]/page";
 import YogaNotFound from "@/app/yoga/[slug]/not-found";
+import { SAFETY_STOP_NOTICE, WELLNESS_DISCLAIMER } from "@/components/layout/wellness-copy";
 import { getPracticeBySlug, type Practice, type PracticeResult } from "@/lib/content";
 import { mapPracticeRow } from "@/lib/content/mapping";
 import type { PracticeRow } from "@/lib/content/types";
@@ -99,9 +100,61 @@ describe("Practice Details routes", () => {
     expect(order.indexOf("safety-caution")).toBeLessThan(order.indexOf("instructions"));
 
     expect(screen.getByRole("link", { name: /Back to Yoga/ })).toHaveAttribute("href", "/yoga");
-    // Slots owned by later Issues stay empty (#14, #16, #17).
+    // The actions slot is owned by later Issues (#16, #17).
     expect(container.querySelector('[data-slot="practice-actions"]')).toBeNull();
-    expect(container.querySelector('[data-slot="safety-notice"]')).toBeNull();
+  });
+
+  it("shows the approved stop-on-pain line under the heading, before the practice's caution (#14)", async () => {
+    resolveWith({ ok: true, data: yoga });
+    const { container } = await renderPage(YogaRoute, yoga.slug);
+
+    const section = screen.getByRole("region", { name: "Safety & Caution" });
+    const notice = within(section).getByText(SAFETY_STOP_NOTICE);
+    const caution = within(section).getByText(yoga.caution as string);
+    const firstStep = screen.getByText(yoga.instructions[0]);
+    expect(notice.closest('[data-slot="safety-notice"]')).not.toBeNull();
+    expect(notice.compareDocumentPosition(caution) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      caution.compareDocumentPosition(firstStep) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // The heading comes first inside the section, then the notice.
+    const heading = within(section).getByRole("heading", { level: 2, name: "Safety & Caution" });
+    expect(heading.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Exactly one stop-on-pain line per page.
+    expect(container.querySelectorAll('[data-slot="safety-notice"]')).toHaveLength(1);
+  });
+
+  it.each([
+    ["Yoga", ROUTES.Yoga],
+    ["Breathwork", ROUTES.Breathwork],
+    ["Meditation", ROUTES.Meditation],
+  ] as const)(
+    "always renders Safety & Caution before Instructions on %s details, with the in-page disclaimer",
+    async (_type, { route, practice }) => {
+      resolveWith({ ok: true, data: practice });
+      const { container } = await renderPage(route, practice.slug);
+      const order = Array.from(container.querySelectorAll("[data-section]")).map((el) =>
+        el.getAttribute("data-section"),
+      );
+      expect(order.slice(0, 3)).toEqual(["header", "safety-caution", "instructions"]);
+      const section = screen.getByRole("region", { name: "Safety & Caution" });
+      expect(section).toHaveTextContent(SAFETY_STOP_NOTICE);
+      expect(within(section).getByText(WELLNESS_DISCLAIMER)).toBeInTheDocument();
+    },
+  );
+
+  it("still renders Safety & Caution with the stop-on-pain line when caution is null", async () => {
+    expect(breathwork.caution).toBeNull();
+    resolveWith({ ok: true, data: breathwork });
+    const { container } = await renderPage(BreathworkRoute, breathwork.slug);
+
+    const section = screen.getByRole("region", { name: "Safety & Caution" });
+    expect(within(section).getByText(SAFETY_STOP_NOTICE)).toBeInTheDocument();
+    expect(container.querySelector('[data-slot="practice-caution"]')).toBeNull();
+    const instructions = screen.getByRole("region", { name: "Instructions" });
+    expect(
+      section.compareDocumentPosition(instructions) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it.each([

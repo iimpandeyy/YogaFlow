@@ -1,5 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { WELLNESS_DISCLAIMER } from "@/components/layout/wellness-copy";
 import { PracticeCard } from "@/components/practice/practice-card";
 import { PracticeDetailLayout } from "@/components/practice/practice-detail-layout";
 import { EmptyState } from "@/components/states/empty-state";
@@ -190,6 +191,24 @@ describe("PracticeDetailLayout", () => {
     const caution = within(section as HTMLElement).getByText(yoga.caution!);
     expect(slot).not.toBeNull();
     expect(slot!.compareDocumentPosition(caution) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("makes Safety & Caution a distinct block with a decorative icon and the disclaimer (#14)", () => {
+    render(<PracticeDetailLayout practice={yoga} safetyNotice={<p>General notice</p>} />);
+    const section = screen.getByRole("region", { name: "Safety & Caution" });
+    // Distinguishable without color: a bordered block, a heading, and a hidden decorative icon.
+    expect(section.className).toMatch(/\bborder-2\b/);
+    const heading = within(section).getByRole("heading", { level: 2 });
+    expect(heading.textContent).toBe("Safety & Caution");
+    const icon = heading.querySelector("svg");
+    expect(icon).not.toBeNull();
+    expect(icon).toHaveAttribute("aria-hidden", "true");
+    // The in-page reinforcement reuses the exact footer disclaimer, after the caution text.
+    const disclaimer = within(section).getByText(WELLNESS_DISCLAIMER);
+    const caution = within(section).getByText(yoga.caution!);
+    expect(
+      caution.compareDocumentPosition(disclaimer) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("renders the actions slot in the header only when actions are given", () => {

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 import { focusRing } from "@/components/layout/focus-ring";
+import { SAFETY_STOP_NOTICE } from "@/components/layout/wellness-copy";
 import { FailureState } from "@/components/states/failure-state";
 import { LoadingState } from "@/components/states/loading-state";
 import { getPracticeBySlug, type PracticeResult, type PracticeType } from "@/lib/content";
@@ -102,8 +103,8 @@ export async function renderPracticeDetailsPage(
       <div className="mx-auto max-w-3xl min-w-0 px-4 pt-6 sm:px-6">
         <BackToLibraryLink type={type} />
       </div>
-      {/* actions (#16, #17) and safetyNotice (#14) are intentionally left unset here. */}
-      <PracticeDetailLayout practice={result.data} />
+      {/* actions (#16, #17) are intentionally left unset here. */}
+      <PracticeDetailLayout practice={result.data} safetyNotice={<p>{SAFETY_STOP_NOTICE}</p>} />
     </>
   );
 }

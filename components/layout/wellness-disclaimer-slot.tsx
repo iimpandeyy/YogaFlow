@@ -1,9 +1,13 @@
+import { WELLNESS_DISCLAIMER } from "./wellness-copy";
+
 /**
- * Reserved slot for the general-wellness disclaimer (SDD US-10, POLICY §2).
- *
- * Issue #14 owns the disclaimer wording, which is pending owner approval. Do not add text here
- * outside of #14. Until then this renders an empty, clearly marked placeholder element.
+ * General-wellness disclaimer shown in the footer of every page (SDD US-10, RC-01; POLICY §2;
+ * Issue #14). The wording is owner-approved and lives in `wellness-copy.ts`.
  */
 export function WellnessDisclaimerSlot() {
-  return <div data-slot="wellness-disclaimer" />;
+  return (
+    <p data-slot="wellness-disclaimer" className="break-words">
+      {WELLNESS_DISCLAIMER}
+    </p>
+  );
 }

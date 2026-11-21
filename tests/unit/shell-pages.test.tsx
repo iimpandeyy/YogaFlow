@@ -7,6 +7,7 @@ import FavoritesPage from "@/app/favorites/page";
 import MeditationPage from "@/app/meditation/page";
 import RoutinePage from "@/app/routine/page";
 import { SiteFooter } from "@/components/layout/site-footer";
+import { WELLNESS_DISCLAIMER } from "@/components/layout/wellness-copy";
 
 describe("not-found page", () => {
   it("shows a friendly message and a link back to Home", () => {
@@ -46,11 +47,14 @@ describe("section placeholder pages", () => {
 });
 
 describe("site footer", () => {
-  it("is a contentinfo landmark with an empty, marked disclaimer slot (#14)", () => {
+  it("is a contentinfo landmark showing the approved general-wellness disclaimer (#14)", () => {
     render(<SiteFooter />);
     const footer = screen.getByRole("contentinfo");
     const slot = footer.querySelector('[data-slot="wellness-disclaimer"]');
     expect(slot).not.toBeNull();
-    expect(slot?.textContent).toBe("");
+    expect(slot?.textContent).toBe(WELLNESS_DISCLAIMER);
+    expect(WELLNESS_DISCLAIMER).toBe(
+      "YogaFlow provides general wellness information for educational purposes only. It is not medical advice and is not a substitute for guidance from a qualified health professional.",
+    );
   });
 });

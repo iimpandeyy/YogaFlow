@@ -21,6 +21,14 @@ async function expectNoHorizontalOverflow(page: Page) {
   expect(overflow).toBeLessThanOrEqual(0);
 }
 
+// Owner-approved wording (#14); mirrors components/layout/wellness-copy.ts.
+const WELLNESS_DISCLAIMER =
+  "YogaFlow provides general wellness information for educational purposes only. It is not medical advice and is not a substitute for guidance from a qualified health professional.";
+
+async function expectFooterDisclaimer(page: Page) {
+  await expect(page.getByRole("contentinfo")).toContainText(WELLNESS_DISCLAIMER);
+}
+
 test("home page shows the YogaFlow heading", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveTitle("YogaFlow");
@@ -48,6 +56,7 @@ for (const viewport of WIDTHS) {
         await nav.getByRole("link", { name: dest.label, exact: true }).click();
         await expect(page).toHaveURL(dest.path);
         await expect(page.getByRole("heading", { level: 1, name: dest.heading })).toBeVisible();
+        await expectFooterDisclaimer(page);
         // The mobile menu closes after navigation, so include hidden links in this query.
         const currentLink = page
           .getByRole("navigation", { name: "Primary", includeHidden: true })
@@ -67,6 +76,7 @@ for (const viewport of WIDTHS) {
       const response = await page.goto("/this-page-does-not-exist");
       expect(response?.status()).toBe(404);
       await expect(page.getByRole("heading", { level: 1, name: "Page not found" })).toBeVisible();
+      await expectFooterDisclaimer(page);
       await expectNoHorizontalOverflow(page);
       await page.getByRole("link", { name: "Go to Home" }).click();
       await expect(page).toHaveURL("/");
@@ -85,6 +95,7 @@ for (const viewport of WIDTHS) {
         await expect(
           page.getByRole("heading", { level: 1, name: "Practice not found" }),
         ).toBeVisible();
+        await expectFooterDisclaimer(page);
         await expectNoHorizontalOverflow(page);
         const nav = page.getByRole("navigation", { name: "Primary", includeHidden: true });
         await expect(
