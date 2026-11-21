@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseConfig, type SupabaseEnvName } from "./config";
 
 /**
- * Lazily created, read-only-intended Supabase client using the public anonymous key.
+ * Lazily created, read-only-intended Supabase client using the publishable key.
  *
  * The client is created only when this function is called and the configuration is present.
  * Supabase Authentication is not used: sessions are not persisted or refreshed.
@@ -19,7 +19,7 @@ export function getSupabaseClient(): SupabaseClientResult {
   const config = getSupabaseConfig();
   if (!config.ok) return { ok: false, reason: "not-configured", missing: config.missing };
 
-  cachedClient ??= createClient(config.url, config.anonKey, {
+  cachedClient ??= createClient(config.url, config.publishableKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
