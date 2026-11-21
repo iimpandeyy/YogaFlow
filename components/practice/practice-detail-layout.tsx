@@ -77,13 +77,13 @@ export function PracticeDetailLayout({
           <h2 id="practice-caution" className="text-xl font-semibold">
             Safety &amp; Caution
           </h2>
-          {practice.caution !== null ? (
-            <p className="mt-3 break-words text-slate-800">{practice.caution}</p>
-          ) : null}
           {safetyNotice !== undefined ? (
             <div data-slot="safety-notice" className="mt-3">
               {safetyNotice}
             </div>
+          ) : null}
+          {practice.caution !== null ? (
+            <p className="mt-3 break-words text-slate-800">{practice.caution}</p>
           ) : null}
         </section>
       ) : null}

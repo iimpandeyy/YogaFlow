@@ -180,6 +180,18 @@ describe("PracticeDetailLayout", () => {
     expect(slot).toHaveTextContent("Notice from #14");
   });
 
+  it("places the safety notice directly under the heading, before the practice's own caution", () => {
+    const { container } = render(
+      <PracticeDetailLayout practice={yoga} safetyNotice={<p>General notice</p>} />,
+    );
+    const section = container.querySelector('[data-section="safety-caution"]');
+    expect(section).not.toBeNull();
+    const slot = section!.querySelector('[data-slot="safety-notice"]');
+    const caution = within(section as HTMLElement).getByText(yoga.caution!);
+    expect(slot).not.toBeNull();
+    expect(slot!.compareDocumentPosition(caution) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("renders the actions slot in the header only when actions are given", () => {
     const { container, rerender } = render(<PracticeDetailLayout practice={yoga} />);
     expect(container.querySelector('[data-slot="practice-actions"]')).toBeNull();
