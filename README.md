@@ -39,10 +39,10 @@ Optional: set `NEXT_TELEMETRY_DISABLED=1` to turn off Next.js telemetry locally 
 
 ## Environment variables
 
-| Name                            | Purpose                         |
-| ------------------------------- | ------------------------------- |
-| `NEXT_PUBLIC_SUPABASE_URL`      | Supabase project URL            |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase public (anonymous) key |
+| Name                                   | Purpose                                                                  |
+| -------------------------------------- | ------------------------------------------------------------------------ |
+| `NEXT_PUBLIC_SUPABASE_URL`             | Supabase project URL                                                     |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase publishable key (`sb_publishable_…`; public, read-only via RLS) |
 
 - Locally, copy `.env.example` to `.env.local` and fill in the values. `.env.local` is ignored by git
   and must never be committed.

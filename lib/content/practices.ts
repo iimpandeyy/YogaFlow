@@ -6,7 +6,7 @@ import { isPracticeType, PRACTICE_COLUMNS, type Practice, type PracticeType } fr
  * Data-access layer for practice content (ARCHITECTURE §3, §9; Issue #8).
  *
  * - The only path from screens to practice content. Screens never query Supabase directly.
- * - Reads from Supabase PostgreSQL with the public anonymous key (RLS: SELECT only). Intended for
+ * - Reads from Supabase PostgreSQL with the publishable key (RLS: SELECT only). Intended for
  *   server-side use (Server Components / route handlers).
  * - Never throws for expected failures: every call returns a typed result the UI can render
  *   (RC-09). There is no local fallback data at runtime.
@@ -22,7 +22,7 @@ import { isPracticeType, PRACTICE_COLUMNS, type Practice, type PracticeType } fr
  */
 
 export type ContentErrorKind =
-  /** NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY are not set. */
+  /** NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY are not set. */
   | "not-configured"
   /** Supabase returned an error, or the request could not be completed. */
   | "query-failed"

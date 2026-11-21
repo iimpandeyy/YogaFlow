@@ -39,7 +39,7 @@ vi.mock("@/lib/supabase/client", () => {
         : {
             ok: false,
             reason: "not-configured",
-            missing: ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"],
+            missing: ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"],
           },
   };
 });
@@ -134,7 +134,7 @@ describe("listPractices", () => {
       reason: "error",
       error: {
         kind: "not-configured",
-        message: "Missing: NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY",
+        message: "Missing: NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
       },
     });
     expect(state.calls).toEqual([]);

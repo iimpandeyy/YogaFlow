@@ -6,7 +6,7 @@
 
 YogaFlow reads public practice content from one Supabase PostgreSQL table, `public.practices`.
 Row-level security (RLS) is on, and the public can only read (SELECT). The app uses only the project
-URL and the **public anonymous (anon) key**. No Supabase Authentication, no Storage, no user data.
+URL and the **publishable key** (public by design; it acts as the anonymous `anon` role). No Supabase Authentication, no Storage, no user data.
 
 This guide sets up the **main content project** that the app reads from. The separate, seeded Supabase
 **test project** used by end-to-end tests is configured later, in Issue #21. Do not use this project for
@@ -46,12 +46,12 @@ In the Supabase dashboard, open **Project Settings** → **API** (or **Data API*
 | Variable | Where to find it |
 |---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` | **Project URL** |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | The **anon / public** key (labelled "publishable" in newer dashboards) |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | **API Keys** → the **Publishable key** (starts with `sb_publishable_`). Do not use the legacy anon key or any secret key. |
 
 These two values are **public by design**: they reach the browser, and RLS keeps the data read-only.
 They still must **never be committed** to this public repository or pasted into Issues or PRs.
 
-> **Never use the service-role key** (also called the "secret" key). It bypasses RLS. It must not go into
+> **Never use a secret key or the service-role key** (`sb_secret_…`). It bypasses RLS. It must not go into
 > `.env.local`, Vercel, the repository, or any browser code.
 
 ## 5. Place the values
@@ -62,7 +62,7 @@ or print this file or its values. You can copy `.env.example` as a starting poin
 
 ```sh
 NEXT_PUBLIC_SUPABASE_URL=<your Project URL>
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<your anon public key>
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<your publishable key>
 ```
 
 **Vercel:** open the Vercel project → **Settings** → **Environment Variables**, and add the same two
@@ -78,11 +78,11 @@ From the repository root, run:
 npm run verify:supabase
 ```
 
-It loads `.env.local` if present, uses only the anon key, and never prints the URL, the key, or any
+It loads `.env.local` if present, uses only the publishable key, and never prints the URL, the key, or any
 other environment value. Expected output:
 
 ```
-1. Practice counts (read with the public anonymous key)
+1. Practice counts (read with the publishable key)
    PASS Yoga: 6 rows
    PASS Breathwork: 3 rows
    PASS Meditation: 3 rows

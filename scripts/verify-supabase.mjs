@@ -3,8 +3,8 @@
  *
  *   npm run verify:supabase
  *
- * Reads NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY from the environment
- * (`.env.local` is loaded automatically when present). Uses ONLY the public anonymous key.
+ * Reads NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY from the environment
+ * (`.env.local` is loaded automatically when present). Uses ONLY the publishable key.
  * It never prints the URL, the key, or any other environment value. It is not run in CI.
  *
  * Checks:
@@ -17,12 +17,12 @@ const EXPECTED_COUNTS = { Yoga: 6, Breathwork: 3, Meditation: 3 };
 const PROBE_SLUG = "__verify_probe__";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
-const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? "";
+const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim() ?? "";
 
 /** Removes any configuration value from text before it is printed. */
 function redact(text) {
   let result = String(text ?? "");
-  for (const secret of [url, anonKey]) {
+  for (const secret of [url, publishableKey]) {
     if (secret) result = result.split(secret).join("[redacted]");
   }
   return result;
@@ -57,20 +57,20 @@ function printCleanup() {
 async function main() {
   const missing = [];
   if (!url) missing.push("NEXT_PUBLIC_SUPABASE_URL");
-  if (!anonKey) missing.push("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  if (!publishableKey) missing.push("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY");
   if (missing.length > 0) {
     console.error(`Missing environment variable(s): ${missing.join(", ")}`);
     console.error("Set them in .env.local at the repository root (see docs/SUPABASE_SETUP.md).");
     return 1;
   }
 
-  const supabase = createClient(url, anonKey, {
+  const supabase = createClient(url, publishableKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
   });
 
   let failed = false;
 
-  console.log("1. Practice counts (read with the public anonymous key)");
+  console.log("1. Practice counts (read with the publishable key)");
   for (const [type, expected] of Object.entries(EXPECTED_COUNTS)) {
     const { count, error } = await supabase
       .from("practices")
