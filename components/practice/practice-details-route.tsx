@@ -7,6 +7,7 @@ import { SAFETY_STOP_NOTICE } from "@/components/layout/wellness-copy";
 import { FailureState } from "@/components/states/failure-state";
 import { LoadingState } from "@/components/states/loading-state";
 import { getPracticeBySlug, type PracticeResult, type PracticeType } from "@/lib/content";
+import { PracticeActions } from "./practice-actions";
 import { PracticeDetailLayout } from "./practice-detail-layout";
 
 /**
@@ -103,8 +104,12 @@ export async function renderPracticeDetailsPage(
       <div className="mx-auto max-w-3xl min-w-0 px-4 pt-6 sm:px-6">
         <BackToLibraryLink type={type} />
       </div>
-      {/* actions (#16, #17) are intentionally left unset here. */}
-      <PracticeDetailLayout practice={result.data} safetyNotice={<p>{SAFETY_STOP_NOTICE}</p>} />
+      {/* actions: Favorites (#16); Routine (#17) joins inside PracticeActions. */}
+      <PracticeDetailLayout
+        practice={result.data}
+        safetyNotice={<p>{SAFETY_STOP_NOTICE}</p>}
+        actions={<PracticeActions practice={result.data} />}
+      />
     </>
   );
 }
