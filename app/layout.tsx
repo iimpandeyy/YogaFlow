@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { focusRing } from "@/components/layout/focus-ring";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { SiteHeader } from "@/components/layout/site-header";
+import { SavedPracticesProvider } from "@/lib/saved";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -21,7 +22,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         </a>
         <SiteHeader />
         <main id="main-content" tabIndex={-1} className="flex-1 focus:outline-none">
-          {children}
+          <SavedPracticesProvider>{children}</SavedPracticesProvider>
         </main>
         <SiteFooter />
       </body>
