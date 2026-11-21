@@ -155,17 +155,21 @@ describe("Favorite toggle on Practice Details", () => {
       expect(status).toHaveTextContent("");
 
       const button = within(actions).getByRole("button", { name: "Save to Favorites" });
-      expect(button).toHaveAttribute("aria-pressed", "false");
+      // The label carries the state; aria-pressed is not used alongside a changing label.
+      expect(button).not.toHaveAttribute("aria-pressed");
+      expect(button).toHaveTextContent("Save to Favorites");
       expect(button).toBeEnabled();
 
       fireEvent.click(button);
-      expect(button).toHaveAttribute("aria-pressed", "true");
+      expect(button).not.toHaveAttribute("aria-pressed");
+      expect(button).toHaveTextContent("Saved to Favorites");
       expect(button).toHaveAccessibleName("Saved to Favorites");
       expect(status).toHaveTextContent("Added to Favorites");
       expect(storage.saved().favorites).toEqual([practice.slug]);
 
       fireEvent.click(button);
-      expect(button).toHaveAttribute("aria-pressed", "false");
+      expect(button).not.toHaveAttribute("aria-pressed");
+      expect(button).toHaveTextContent("Save to Favorites");
       expect(button).toHaveAccessibleName("Save to Favorites");
       expect(status).toHaveTextContent("Removed from Favorites");
       expect(storage.saved().favorites).toEqual([]);
@@ -176,7 +180,8 @@ describe("Favorite toggle on Practice Details", () => {
     useStorage({ favorites: [yoga.slug] });
     render(<FavoriteToggle slug={yoga.slug} />, { wrapper: Wrapper });
     const button = screen.getByRole("button", { name: "Saved to Favorites" });
-    expect(button).toHaveAttribute("aria-pressed", "true");
+    expect(button).toHaveTextContent("Saved to Favorites");
+    expect(button).not.toHaveAttribute("aria-pressed");
     // Nothing is announced until the user acts.
     expect(screen.getByRole("status")).toHaveTextContent("");
   });
@@ -202,7 +207,9 @@ describe("Favorite toggle on Practice Details", () => {
     const button = host.querySelector("button") as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     expect(button.hasAttribute("aria-pressed")).toBe(false);
-    expect(button.textContent).toBe("Favorites");
+    // Not "Favorites", so it cannot be confused with the navigation link; no icon until loaded.
+    expect(button.textContent).toBe("Save to Favorites");
+    expect(button.querySelector("svg")).toBeNull();
     expect(host.querySelector('[role="status"]')).not.toBeNull();
   });
 });
@@ -269,9 +276,9 @@ describe("Favorites page", () => {
     );
     expect(storage.saved().favorites).toEqual([]);
     expect(screen.getByRole("heading", { level: 2, name: "No Favorites yet" })).toBeVisible();
-    expect(
-      screen.getByRole("heading", { level: 2, name: "No Favorites yet" }).closest("[tabindex]"),
-    ).toHaveFocus();
+    const emptyHeading = screen.getByRole("heading", { level: 2, name: "No Favorites yet" });
+    expect(emptyHeading).toHaveAttribute("tabindex", "-1");
+    expect(emptyHeading).toHaveFocus();
   });
 
   it("shows an empty state that explains Favorites and links to discovery", async () => {

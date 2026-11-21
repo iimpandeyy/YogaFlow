@@ -41,7 +41,7 @@ export function FavoritesView({ content }: { content: FavoritesContent }) {
   // Where focus goes after the removed item leaves the list; applied after the next render.
   const pendingFocus = useRef<PendingFocus>(null);
   const removeButtons = useRef(new Map<string, HTMLButtonElement>());
-  const emptyRegion = useRef<HTMLDivElement>(null);
+  const emptyHeading = useRef<HTMLHeadingElement>(null);
 
   const items = content.ok ? resolveSavedPractices(favorites.list, content.practices) : [];
 
@@ -49,7 +49,7 @@ export function FavoritesView({ content }: { content: FavoritesContent }) {
     const target = pendingFocus.current;
     if (!target) return;
     pendingFocus.current = null;
-    if (target.kind === "empty") emptyRegion.current?.focus();
+    if (target.kind === "empty") emptyHeading.current?.focus();
     else removeButtons.current.get(target.slug)?.focus();
   });
 
@@ -74,13 +74,12 @@ export function FavoritesView({ content }: { content: FavoritesContent }) {
     );
   } else if (items.length === 0) {
     body = (
-      <div ref={emptyRegion} tabIndex={-1} className="focus:outline-none">
-        <EmptyState
-          title="No Favorites yet"
-          message="Save a practice from its details page to find it here. Favorites are kept in this browser only."
-          action={DISCOVERY_LINKS}
-        />
-      </div>
+      <EmptyState
+        title="No Favorites yet"
+        message="Save a practice from its details page to find it here. Favorites are kept in this browser only."
+        action={DISCOVERY_LINKS}
+        headingRef={emptyHeading}
+      />
     );
   } else {
     body = (

@@ -31,8 +31,9 @@ function HeartIcon({ filled }: { filled: boolean }) {
 /**
  * Save / remove a practice from Favorites on its details page (US-07; Issue #16).
  *
- * - Saved state is shown by visible text and a filled/outlined icon, not color alone, and exposed
- *   to assistive technology with `aria-pressed`.
+ * - Saved state is shown by visible text and a filled/outlined icon, not color alone. The visible
+ *   label is also the accessible name, so the label carries the state; `aria-pressed` is not used
+ *   as well, because a toggle should not both change its label and report a pressed state.
  * - Until saved state has loaded in this browser (`hydrated`), the button is disabled and neutral,
  *   so it never shows a wrong saved/unsaved state.
  * - Each toggle updates immediately and writes a brief confirmation to a polite live region that
@@ -62,15 +63,9 @@ export function FavoriteToggle({ slug }: FavoriteToggleProps) {
 
   return (
     <div data-favorite-toggle className="flex min-w-0 flex-col gap-1">
-      <button
-        type="button"
-        onClick={toggle}
-        disabled={!hydrated}
-        aria-pressed={hydrated ? saved : undefined}
-        className={`${base} ${look}`}
-      >
+      <button type="button" onClick={toggle} disabled={!hydrated} className={`${base} ${look}`}>
         {hydrated ? <HeartIcon filled={saved} /> : null}
-        <span>{!hydrated ? "Favorites" : saved ? "Saved to Favorites" : "Save to Favorites"}</span>
+        <span>{saved ? "Saved to Favorites" : "Save to Favorites"}</span>
       </button>
       <p role="status" className="min-h-5 text-sm text-slate-700">
         {confirmation}
