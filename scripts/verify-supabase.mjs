@@ -63,6 +63,13 @@ async function main() {
     console.error("Set them in .env.local at the repository root (see docs/SUPABASE_SETUP.md).");
     return 1;
   }
+  if (publishableKey.startsWith("sb_secret_")) {
+    console.error(
+      "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY holds a SECRET key (sb_secret_...). Replace it with the",
+    );
+    console.error("publishable key (sb_publishable_...) and rotate the secret key in Supabase.");
+    return 1;
+  }
 
   const supabase = createClient(url, publishableKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },

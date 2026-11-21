@@ -23,7 +23,11 @@ export function getSupabaseConfig(): SupabaseConfigResult {
 
   const missing: SupabaseEnvName[] = [];
   if (!url) missing.push(SUPABASE_ENV_NAMES.url);
-  if (!publishableKey) missing.push(SUPABASE_ENV_NAMES.publishableKey);
+  // Fail closed: a secret key (sb_secret_...) must never reach createClient or the browser bundle.
+  // Treat it as not configured, exactly like a missing value.
+  if (!publishableKey || publishableKey.startsWith("sb_secret_")) {
+    missing.push(SUPABASE_ENV_NAMES.publishableKey);
+  }
 
   if (missing.length > 0) return { ok: false, missing };
   return { ok: true, url, publishableKey };

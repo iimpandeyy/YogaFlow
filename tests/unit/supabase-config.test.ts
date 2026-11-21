@@ -46,4 +46,14 @@ describe("getSupabaseConfig", () => {
       missing: ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"],
     });
   });
+
+  it("refuses a secret key placed in the publishable-key variable", () => {
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", TEST_URL);
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "sb_secret_dummy");
+
+    expect(getSupabaseConfig()).toEqual({
+      ok: false,
+      missing: ["NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"],
+    });
+  });
 });

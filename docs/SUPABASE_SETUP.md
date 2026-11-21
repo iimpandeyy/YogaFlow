@@ -51,7 +51,7 @@ In the Supabase dashboard, open **Project Settings** → **API** (or **Data API*
 These two values are **public by design**: they reach the browser, and RLS keeps the data read-only.
 They still must **never be committed** to this public repository or pasted into Issues or PRs.
 
-> **Never use a secret key or the service-role key** (`sb_secret_…`). It bypasses RLS. It must not go into
+> **Never use a secret key (`sb_secret_…`) or the legacy service_role key**. It bypasses RLS. It must not go into
 > `.env.local`, Vercel, the repository, or any browser code.
 
 ## 5. Place the values
