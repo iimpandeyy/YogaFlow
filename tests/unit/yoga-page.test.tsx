@@ -44,6 +44,8 @@ describe("Yoga Library page", () => {
 
     expect(listPracticesMock).toHaveBeenCalledWith("Yoga");
     expect(screen.getByRole("heading", { level: 1, name: "Yoga" })).toBeInTheDocument();
+    expect(screen.getByText("Browse a curated set of yoga poses.")).toBeInTheDocument();
+    expect(screen.getByText("Select a pose to see its details.")).toBeInTheDocument();
 
     const cards = screen.getAllByRole("article");
     expect(cards).toHaveLength(YOGA_FIXTURES.length);
@@ -79,11 +81,12 @@ describe("Yoga Library page", () => {
 
       expect(screen.getByRole("heading", { level: 1, name: "Yoga" })).toBeInTheDocument();
       expect(
-        screen.getByRole("heading", { level: 2, name: "Practices could not be loaded" }),
+        screen.getByRole("heading", { level: 2, name: "Yoga practices could not be loaded" }),
       ).toBeInTheDocument();
       expect(screen.getByRole("alert")).toHaveTextContent(
-        "Something went wrong while loading practices. Please try again.",
+        "Something went wrong while loading Yoga practices. Please try again.",
       );
+      expect(screen.queryByText("Select a pose to see its details.")).toBeNull();
       expect(screen.queryByText(/SECRET-DIAGNOSTIC-DETAIL/)).toBeNull();
       expect(screen.queryAllByRole("article")).toHaveLength(0);
 
@@ -102,6 +105,7 @@ describe("Yoga Library page", () => {
       screen.getByRole("heading", { level: 2, name: "No Yoga practices yet" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Please check back later.")).toBeInTheDocument();
+    expect(screen.queryByText("Select a pose to see its details.")).toBeNull();
     expect(screen.queryAllByRole("article")).toHaveLength(0);
   });
 });
