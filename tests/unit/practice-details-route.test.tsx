@@ -166,7 +166,7 @@ describe("Practice Details routes", () => {
         screen.getByRole("heading", { level: 1, name: "This practice could not be loaded" }),
       ).toBeInTheDocument();
       expect(screen.getByRole("alert")).toHaveTextContent(
-        "Something went wrong while loading this practice. Please try again in a moment.",
+        "Something went wrong while loading this practice. Please try again.",
       );
       expect(container).not.toHaveTextContent("SECRET-DIAGNOSTIC-DETAIL");
       expect(container).not.toHaveTextContent(kind);
@@ -198,7 +198,8 @@ describe("Practice Details metadata", () => {
   it("uses a generic title on failure", async () => {
     resolveWith({ ok: false, reason: "error", error: { kind: "query-failed", message: "x" } });
     await expect(BreathworkRoute.generateMetadata(props("test-breathing"))).resolves.toEqual({
-      title: "Breathwork | YogaFlow",
+      title: "Practice could not be loaded | YogaFlow",
+      robots: { index: false },
     });
   });
 });

@@ -57,7 +57,7 @@ export async function generatePracticeMetadata(
   const result = await loadPractice(type, slug);
   if (result.ok) return { title: `${result.data.title} | YogaFlow` };
   if (result.reason === "not-found") return { title: "Practice not found | YogaFlow" };
-  return { title: `${PRACTICE_LIBRARIES[type].label} | YogaFlow` };
+  return { title: "Practice could not be loaded | YogaFlow", robots: { index: false } };
 }
 
 function BackToLibraryLink({ type }: { type: PracticeType }) {
@@ -90,7 +90,7 @@ export async function renderPracticeDetailsPage(
       <div className="mx-auto max-w-3xl min-w-0 px-4 py-10 sm:px-6 sm:py-14">
         <FailureState
           title="This practice could not be loaded"
-          message="Something went wrong while loading this practice. Please try again in a moment."
+          message="Something went wrong while loading this practice. Please try again."
           action={{ href: PRACTICE_LIBRARIES[type].href, label: libraryLinkLabel(type) }}
         />
       </div>
