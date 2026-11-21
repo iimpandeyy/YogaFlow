@@ -71,6 +71,29 @@ for (const viewport of WIDTHS) {
       await page.getByRole("link", { name: "Go to Home" }).click();
       await expect(page).toHaveURL("/");
     });
+
+    // A malformed slug is not found without a content read, so this needs no Supabase (#13).
+    for (const library of [
+      { label: "Yoga", path: "/yoga" },
+      { label: "Breathwork", path: "/breathwork" },
+      { label: "Meditation", path: "/meditation" },
+    ] as const) {
+      test(`an unknown ${library.label} practice shows not-found with a way back to ${library.label}`, async ({
+        page,
+      }) => {
+        await page.goto(`${library.path}/Not_A_Practice`);
+        await expect(
+          page.getByRole("heading", { level: 1, name: "Practice not found" }),
+        ).toBeVisible();
+        await expectNoHorizontalOverflow(page);
+        const nav = page.getByRole("navigation", { name: "Primary", includeHidden: true });
+        await expect(
+          nav.getByRole("link", { name: library.label, exact: true, includeHidden: true }),
+        ).toHaveAttribute("aria-current", "page");
+        await page.getByRole("link", { name: `Back to ${library.label}` }).click();
+        await expect(page).toHaveURL(library.path);
+      });
+    }
   });
 }
 
