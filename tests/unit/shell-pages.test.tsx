@@ -6,7 +6,6 @@ import BreathworkPage from "@/app/breathwork/page";
 import FavoritesPage from "@/app/favorites/page";
 import MeditationPage from "@/app/meditation/page";
 import RoutinePage from "@/app/routine/page";
-import YogaPage from "@/app/yoga/page";
 import { SiteFooter } from "@/components/layout/site-footer";
 
 describe("not-found page", () => {
@@ -35,7 +34,6 @@ describe("error boundary", () => {
 
 describe("section placeholder pages", () => {
   it.each([
-    ["Yoga", YogaPage],
     ["Breathwork", BreathworkPage],
     ["Meditation", MeditationPage],
     ["Favorites", FavoritesPage],
