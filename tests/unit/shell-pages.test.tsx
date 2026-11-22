@@ -2,8 +2,6 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import ErrorBoundary from "@/app/error";
 import NotFound from "@/app/not-found";
-import BreathworkPage from "@/app/breathwork/page";
-import MeditationPage from "@/app/meditation/page";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { WELLNESS_DISCLAIMER } from "@/components/layout/wellness-copy";
 
@@ -28,17 +26,6 @@ describe("error boundary", () => {
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(retry).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("link", { name: "Go to Home" })).toHaveAttribute("href", "/");
-  });
-});
-
-describe("section placeholder pages", () => {
-  it.each([
-    ["Breathwork", BreathworkPage],
-    ["Meditation", MeditationPage],
-  ] as const)("%s renders its heading and a coming-soon note", (label, Page) => {
-    render(<Page />);
-    expect(screen.getByRole("heading", { level: 1, name: label })).toBeInTheDocument();
-    expect(screen.getByText("This section is coming soon.")).toBeInTheDocument();
   });
 });
 

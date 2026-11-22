@@ -38,3 +38,27 @@ export const breathworkRow: PracticeRow = {
   caution: null,
   image_path: "/images/practices/test-breathing.svg",
 };
+
+export const secondBreathworkRow: PracticeRow = {
+  ...breathworkRow,
+  slug: "another-test-breathing",
+  title: "Another Test Breathing",
+  difficulty: "Beginner",
+  image_path: "/images/practices/another-test-breathing.svg",
+};
+
+export const meditationRow: PracticeRow = {
+  ...breathworkRow,
+  slug: "test-meditation",
+  title: "Test Meditation",
+  type: "Meditation",
+  image_path: "/images/practices/test-meditation.svg",
+  image_alt: "Test meditation image",
+};
+
+export const secondMeditationRow: PracticeRow = {
+  ...meditationRow,
+  slug: "another-test-meditation",
+  title: "Another Test Meditation",
+  image_path: "/images/practices/another-test-meditation.svg",
+};
