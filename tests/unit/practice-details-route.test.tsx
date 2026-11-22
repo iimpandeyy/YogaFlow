@@ -63,7 +63,8 @@ function props(slug: string) {
 
 /** Renders an async Server Component page by awaiting it, then rendering its result. */
 async function renderPage(route: RouteModule, slug: string) {
-  // Details pages include the Favorites toggle (#16), which needs the saved-practices provider.
+  // Details pages include the Favorites (#16) and Routine (#17) toggles, which need the
+  // saved-practices provider.
   return render(await route.default(props(slug)), { wrapper: SavedPracticesProvider });
 }
 
@@ -102,10 +103,17 @@ describe("Practice Details routes", () => {
     expect(order.indexOf("safety-caution")).toBeLessThan(order.indexOf("instructions"));
 
     expect(screen.getByRole("link", { name: /Back to Yoga/ })).toHaveAttribute("href", "/yoga");
-    // The actions slot holds the Favorites toggle (#16); the safety notice slot is filled (#14).
+    // The actions slot holds the Favorites (#16) and Routine (#17) toggles, in that order; the
+    // safety notice slot is filled (#14).
     const actions = container.querySelector('[data-slot="practice-actions"]') as HTMLElement;
     expect(actions).not.toBeNull();
     expect(within(actions).getByRole("button", { name: "Save to Favorites" })).toBeInTheDocument();
+    expect(within(actions).getByRole("button", { name: "Add to Routine" })).toBeInTheDocument();
+    expect(
+      within(actions)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Save to Favorites", "Add to Routine"]);
     expect(container.querySelector('[data-slot="safety-notice"]')).toHaveTextContent(
       SAFETY_STOP_NOTICE,
     );

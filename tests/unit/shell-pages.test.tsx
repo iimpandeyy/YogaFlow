@@ -4,7 +4,6 @@ import ErrorBoundary from "@/app/error";
 import NotFound from "@/app/not-found";
 import BreathworkPage from "@/app/breathwork/page";
 import MeditationPage from "@/app/meditation/page";
-import RoutinePage from "@/app/routine/page";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { WELLNESS_DISCLAIMER } from "@/components/layout/wellness-copy";
 
@@ -36,7 +35,6 @@ describe("section placeholder pages", () => {
   it.each([
     ["Breathwork", BreathworkPage],
     ["Meditation", MeditationPage],
-    ["Routine", RoutinePage],
   ] as const)("%s renders its heading and a coming-soon note", (label, Page) => {
     render(<Page />);
     expect(screen.getByRole("heading", { level: 1, name: label })).toBeInTheDocument();
