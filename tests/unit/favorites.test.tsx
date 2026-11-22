@@ -151,7 +151,9 @@ describe("Favorite toggle on Practice Details", () => {
 
       const actions = container.querySelector('[data-slot="practice-actions"]') as HTMLElement;
       expect(actions).not.toBeNull();
-      const status = within(actions).getByRole("status");
+      // The Routine toggle (#17) shares the slot, so scope to the Favorites toggle's own status.
+      const favoriteToggle = actions.querySelector("[data-favorite-toggle]") as HTMLElement;
+      const status = within(favoriteToggle).getByRole("status");
       expect(status).toHaveTextContent("");
 
       const button = within(actions).getByRole("button", { name: "Save to Favorites" });

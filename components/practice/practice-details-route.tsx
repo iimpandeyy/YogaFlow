@@ -104,7 +104,7 @@ export async function renderPracticeDetailsPage(
       <div className="mx-auto max-w-3xl min-w-0 px-4 pt-6 sm:px-6">
         <BackToLibraryLink type={type} />
       </div>
-      {/* actions: Favorites (#16); Routine (#17) joins inside PracticeActions. */}
+      {/* actions: Favorites (#16) and Routine (#17), inside PracticeActions. */}
       <PracticeDetailLayout
         practice={result.data}
         safetyNotice={<p>{SAFETY_STOP_NOTICE}</p>}
