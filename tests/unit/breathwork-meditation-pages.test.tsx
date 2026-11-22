@@ -40,7 +40,7 @@ const LIBRARIES = [
     Loading: BreathworkLoading,
     basePath: "/breathwork",
     intro: "Explore beginner-friendly breathing exercises.",
-    hint: "Select an exercise to see its steps.",
+    hint: "Select an exercise to see its instructions.",
     // Deliberately not alphabetical: the page must keep the data-access layer's order.
     // One fixture has no difficulty and one has Beginner, to show it appears only when applicable.
     fixtures: [toPractice(breathworkRow), toPractice(secondBreathworkRow)],

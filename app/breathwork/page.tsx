@@ -24,7 +24,7 @@ export default async function BreathworkPage() {
           type="Breathwork"
           result={result}
           basePath="/breathwork"
-          selectHint="Select an exercise to see its steps."
+          selectHint="Select an exercise to see its instructions."
         />
       </div>
     </div>
